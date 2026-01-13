@@ -1,4 +1,4 @@
-package expanduserdirectory
+package userdirectory
 
 import (
 	"os/user"
