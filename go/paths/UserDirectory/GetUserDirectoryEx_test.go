@@ -50,7 +50,7 @@ func TestGetUserDirectoryEx(t *testing.T) {
 			}
 		}
 		if result != test.expected {
-			t.Errorf("ExpandUserDirectory(%q) = %q; want %q", test.input, result, test.expected)
+			t.Errorf("GetUserDirectory(%q) = %q; want %q", test.input, result, test.expected)
 		}
 	}
 }

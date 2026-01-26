@@ -13,7 +13,8 @@ func GetUserDirectoryEx(name string, userHomeDir func() (string, error), userLoo
 		return
 	}
 
-	u, err := userLookup(name)
+	var u *user.User
+	u, err = userLookup(name)
 	if err != nil {
 		return
 	}

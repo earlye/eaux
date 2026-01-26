@@ -15,5 +15,4 @@ and then inside each will be a forest of topics and micro-libraries:
 
 For example:
 
-go/paths/ExpandHomeDirectory/
-
+go/paths/UserDirectory/
