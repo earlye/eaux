@@ -2,8 +2,17 @@ package env
 
 import (
 	"os"
+	"reflect"
 	"testing"
 )
+
+func TestMap(t *testing.T) {
+	got := Map([]string{"A=1", "B=2", "NOEQ", "C="})
+	want := map[string]string{"A": "1", "B": "2", "C": ""}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Map() = %v, want %v", got, want)
+	}
+}
 
 func TestGetenvDefault(t *testing.T) {
 	const key = "EAUX_TEST_GETENV_DEFAULT"
