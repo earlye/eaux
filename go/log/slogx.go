@@ -12,11 +12,35 @@ const LevelTrace = slog.Level(-6)
 
 // Create a slog.Handler based on the format string.
 func SlogHandler(format string, opts *slog.HandlerOptions) slog.Handler {
+	originalReplacer := opts.ReplaceAttr
+	opts.ReplaceAttr = func(groups []string, a slog.Attr) slog.Attr {
+		if a.Key == "level" {
+			level, ok := a.Value.Any().(slog.Level)
+			if ok {
+				a.Value = slog.StringValue(LevelString(slog.Level(level)))
+			}
+		}
+		if originalReplacer != nil {
+			return originalReplacer(groups, a)
+		}
+		return a
+	}
 	switch format {
 	case "json":
 		return slog.NewJSONHandler(os.Stderr, opts)
 	default:
 		return slog.NewTextHandler(os.Stderr, opts)
+	}
+}
+
+func LevelString(level slog.Level) string {
+	switch level {
+	case LevelSilly:
+		return "SILLY"
+	case LevelTrace:
+		return "TRACE"
+	default:
+		return level.String()
 	}
 }
 
