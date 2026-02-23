@@ -11,17 +11,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options configures AddPersistentFlags (env vars and defaults for verbosity and log-format).
-type Options struct {
+// CobraOptions configures AddPersistentFlags (env vars and defaults for verbosity and log-format).
+type CobraOptions struct {
 	VerbosityEnv     string // e.g. "APPLICATION_VERBOSITY"
 	VerbosityDefault string // e.g. "INFO"
 	LogFormatEnv     string // e.g. "APPLICATION_LOG_FORMAT"
 	LogFormatDefault string // e.g. "text"
 }
 
+type SlogOptions struct {
+	DefaultAttrs []slog.Attr // e.g. []slog.Attr{slog.String("version", consts.Version)}
+}
+
 // AddPersistentFlags adds --verbosity/-v and --log-format/-f to cmd.
 // Flag default values are taken from the env vars in opts when set, otherwise the Default fields.
-func AddPersistentFlags(cmd *cobra.Command, opts Options) {
+func AddPersistentFlags(cmd *cobra.Command, opts CobraOptions) {
 	verbosityDefault := env.GetenvDefault(opts.VerbosityEnv, opts.VerbosityDefault)
 	logFormatDefault := env.GetenvDefault(opts.LogFormatEnv, opts.LogFormatDefault)
 
@@ -38,13 +42,16 @@ func AddPersistentFlags(cmd *cobra.Command, opts Options) {
 // SlogPreRunE is a cobra.PersistentPreRunE that sets slog.Default from cmd's verbosity and log-format flags.
 // Use it as rootCmd.PersistentPreRunE = slogx.SlogPreRunE.
 // The cmd passed at run time (e.g. root or subcommand) is used to read the flags.
-func SlogPreRunE(cmd *cobra.Command, args []string) error {
+func SlogPreRunE(cmd *cobra.Command, args []string, slogxSlogOpts SlogOptions) error {
 	level, err := logging.SlogLevel(cmd.Flag("verbosity").Value.String())
 	if err != nil {
 		return err
 	}
 	opts := &slog.HandlerOptions{Level: level}
 	h := logging.SlogHandler(cmd.Flag("log-format").Value.String(), opts)
+	if len(slogxSlogOpts.DefaultAttrs) > 0 {
+		h = h.WithAttrs(slogxSlogOpts.DefaultAttrs)
+	}
 	slog.SetDefault(slog.New(h))
 	return nil
 }
