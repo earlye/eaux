@@ -8,15 +8,17 @@ import (
 // Map returns a map of key=value entries from environ (e.g. os.Environ()).
 // Entries without '=' are skipped.
 func Map(environ []string) map[string]string {
-	m := make(map[string]string, len(environ))
+	result := make(map[string]string, len(environ))
 	for _, e := range environ {
 		i := strings.IndexByte(e, '=')
 		if i < 0 {
 			continue
 		}
-		m[e[:i]] = e[i+1:]
+		key := e[:i]
+		value := e[i+1:]
+		result[key] = value
 	}
-	return m
+	return result
 }
 
 // GetenvDefault returns the value of the environment variable key if set, otherwise fallback.
