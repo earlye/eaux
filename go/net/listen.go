@@ -28,7 +28,7 @@ func ListenOnNextPort(host string, startPort int) (net.Listener, string, error) 
 		addr := net.JoinHostPort(host, portStr)
 		ln, err := net.Listen("tcp", addr)
 		if err == nil {
-			return ln, addr, nil
+			return ln, addr, nil // success path
 		}
 		if IsAddrInUse(err) {
 			continue
