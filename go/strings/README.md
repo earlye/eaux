@@ -1,3 +1,3 @@
-# github.com/earlye/eaux/go/log
+# github.com/earlye/eaux/go/strings
 
 This package extends `"strings"` by providing some helpers.
