@@ -1,5 +1,6 @@
-// coverage-ignore-file
 package userdirectory
+
+// coverage-ignore-file
 
 import (
 	"os"

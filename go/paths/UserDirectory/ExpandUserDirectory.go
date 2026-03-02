@@ -1,5 +1,6 @@
-// coverage-ignore-file
 package userdirectory
+
+// coverage-ignore-file
 
 // ExpandUserDirectory expands a path possibly prefixed with `~` to the full path.
 func ExpandUserDirectory(path string) (result string, err error) {
