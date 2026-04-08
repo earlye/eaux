@@ -3,7 +3,6 @@ package logging
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 )
@@ -21,7 +20,6 @@ func SlogHandler(format string, opts *slog.HandlerOptions) slog.Handler {
 		}
 	}
 	originalReplacer := opts.ReplaceAttr
-	fmt.Printf("SlogHandler: format=%s, opts=%+v\n", format, opts)
 	opts.ReplaceAttr = func(groups []string, a slog.Attr) slog.Attr {
 		if a.Key == "level" {
 			level, ok := a.Value.Any().(slog.Level)
