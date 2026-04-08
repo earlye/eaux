@@ -93,23 +93,31 @@ func TraceContext(ctx context.Context, msg string, args ...any) {
 	slog.Default().Log(ctx, LevelTrace, msg, args...)
 }
 
-// SwallowFailureWithLog logs an error and "swallows" it. This is mainly useful for situations
-// where there isn't anything you can do with an error. For example:
-// defer SwallowFailureWithLog(CloseSomeResource()) <== what can you actually do if the
-//   resource fails to close? Nothing really - your main other option is to panic.
-func SwallowFailureWithLog(err error) {
+// DeferredSwallowFailureWithLog logs an error and "swallows" it. This is mainly useful for situations
+// where there isn't anything you can do with an error.
+// For example:
+//
+//	 defer DeferredSwallowFailureWithLog(CloseSomeResource())
+//		  // What can you actually do if the resource fails to close?
+//		  // Nothing really; your main other option is to panic.
+func DeferredSwallowFailureWithLog(f func() error) {
+	err := f()
 	if err != nil {
 		slog.Warn("Swallowing error", "error", err)
 	}
 }
 
-// SwallowFailureWithLog1 logs an error and "swallows" it, ignoring the first parameter.
-// This is mainly useful for situations where there isn't anything you can do
-// with an error and you don't care about the return value. For example:
-// defer SwallowFailureWithLog(CloseSomeResource()) <== what can you actually do if the
-//   resource fails to close? Nothing really - your main other option is to panic.
-func SwallowFailureWithLog1[T any](_ T, err error) {
+// DeferredSwallowFailureWithLog1 logs an error and "swallows" it along with the return value.
+// This is mainly useful for situations where there isn't anything you can do with an error or return value.
+// For example:
+//
+//	 defer DeferredSwallowFailureWithLog1(CloseSomeResource())
+//		  // What can you actually do if the resource fails to close?
+//		  // Nothing really; your main other option is to panic.
+func DeferredSwallowFailureWithLog1[T any](f func() (T, error)) T {
+	v, err := f()
 	if err != nil {
 		slog.Warn("Swallowing error", "error", err)
 	}
+	return v
 }
