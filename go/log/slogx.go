@@ -73,18 +73,43 @@ func SlogLevel(v string) (slog.Level, error) {
 	}
 }
 
+// Silly logs silly-level messages.
 func Silly(msg string, args ...any) {
 	slog.Default().Log(context.Background(), LevelSilly, msg, args...)
 }
 
+// SillyContext logs silly-level messages with context
 func SillyContext(ctx context.Context, msg string, args ...any) {
 	slog.Default().Log(ctx, LevelSilly, msg, args...)
 }
 
+// Trace logs trace-level messages
 func Trace(msg string, args ...any) {
 	slog.Default().Log(context.Background(), LevelTrace, msg, args...)
 }
 
+// TraceContext logs trace-level messages with context
 func TraceContext(ctx context.Context, msg string, args ...any) {
 	slog.Default().Log(ctx, LevelTrace, msg, args...)
+}
+
+// SwallowFailureWithLog logs an error and "swallows" it. This is mainly useful for situations
+// where there isn't anything you can do with an error. For example:
+// defer SwallowFailureWithLog(CloseSomeResource()) <== what can you actually do if the
+//   resource fails to close? Nothing really - your main other option is to panic.
+func SwallowFailureWithLog(err error) {
+	if err != nil {
+		slog.Warn("Swallowing error", "error", err)
+	}
+}
+
+// SwallowFailureWithLog1 logs an error and "swallows" it, ignoring the first parameter.
+// This is mainly useful for situations where there isn't anything you can do
+// with an error and you don't care about the return value. For example:
+// defer SwallowFailureWithLog(CloseSomeResource()) <== what can you actually do if the
+//   resource fails to close? Nothing really - your main other option is to panic.
+func SwallowFailureWithLog1[T any](T, err error) {
+	if err != nil {
+		slog.Warn("Swallowing error", "error", err)
+	}
 }
