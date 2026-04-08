@@ -6,7 +6,7 @@ import (
 	"log/slog"
 )
 
-// FprintOrWarn writes to w like [fmt.FprintOrWarn]. If the write fails, it logs a warning with [slog.Warn]
+// FprintOrWarn writes to w using [fmt.Fprint]. If the write fails, it logs a warning with [slog.Warn]
 // and swallows n and err from the underlying call.
 func FprintOrWarn(w io.Writer, a ...any) {
 	_, err := fmt.Fprint(w, a...)
