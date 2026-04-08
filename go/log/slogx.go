@@ -95,7 +95,7 @@ func TraceContext(ctx context.Context, msg string, args ...any) {
 // where there isn't anything you can do with an error.
 // For example:
 //
-//	 defer DeferredSwallowFailureWithLog(CloseSomeResource())
+//	 defer DeferredSwallowFailureWithLog(CloseSomeResource)
 //		  // What can you actually do if the resource fails to close?
 //		  // Nothing really; your main other option is to panic.
 func DeferredSwallowFailureWithLog(f func() error) {
@@ -109,7 +109,7 @@ func DeferredSwallowFailureWithLog(f func() error) {
 // This is mainly useful for situations where there isn't anything you can do with an error or return value.
 // For example:
 //
-//	 defer DeferredSwallowFailureWithLog1(CloseSomeResource())
+//	 defer DeferredSwallowFailureWithLog1(CloseSomeResource)
 //		  // What can you actually do if the resource fails to close?
 //		  // Nothing really; your main other option is to panic.
 func DeferredSwallowFailureWithLog1[T any](f func() (T, error)) T {
