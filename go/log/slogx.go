@@ -108,7 +108,7 @@ func SwallowFailureWithLog(err error) {
 // with an error and you don't care about the return value. For example:
 // defer SwallowFailureWithLog(CloseSomeResource()) <== what can you actually do if the
 //   resource fails to close? Nothing really - your main other option is to panic.
-func SwallowFailureWithLog1[T any](T, err error) {
+func SwallowFailureWithLog1[T any](_ T, err error) {
 	if err != nil {
 		slog.Warn("Swallowing error", "error", err)
 	}
