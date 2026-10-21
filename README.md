@@ -16,3 +16,7 @@ and then inside each will be a forest of topics and micro-libraries:
 For example:
 
 go/paths/UserDirectory/
+rust/ipc/app-agent/
+
+Run `make` at the root to build and test every language tree (`go/` and
+`rust/`). Each library has its own README, Makefile and MIT license.

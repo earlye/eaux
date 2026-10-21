@@ -1,0 +1,47 @@
+[package]
+name = "app-agent"
+version = "0.0.1-alpha.1"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "Per-user, single-instance resident agent (ssh-agent/gpg-agent style): lock-first startup, connect-or-spawn, and a JSON-lines call/subscribe protocol over a private local socket or named pipe."
+repository = "https://github.com/earlye/eaux"
+homepage = "https://github.com/earlye/eaux/tree/main/rust/ipc/app-agent"
+readme = "README.md"
+keywords = ["agent", "daemon", "ipc", "single-instance", "named-pipe"]
+categories = ["os", "asynchronous", "network-programming"]
+include = ["src/**/*.rs", "tests/**/*.rs", "Cargo.toml", "README.md", "LICENSE.MIT"]
+
+[dependencies]
+futures-core = "0.3"
+interprocess = { version = "2.4", features = ["tokio"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.36", features = ["rt", "io-util", "sync", "time", "macros"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+widestring = "1"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.36", features = ["rt-multi-thread", "macros", "time"] }
+
+# The integration test binary doubles as the dummy agent: when launched with
+# `--dummy-agent` it serves instead of running tests, so it needs its own main.
+[[test]]
+name = "agent"
+path = "tests/agent.rs"
+harness = false

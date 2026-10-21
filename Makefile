@@ -1,5 +1,15 @@
-# Simple placeholder that forwards all make commands to the go subdirectory.
-# Obviously when we add other languages, this will need to be updated.
+# Builds and tests every language tree. Each tree's default goal (`all`)
+# builds and tests everything in it, so `make`, `make build` and `make test`
+# all do the full run. Any other goal (e.g. `make clean`) is forwarded to
+# every tree as-is.
+LANGUAGES := go rust
 .DEFAULT_GOAL := build
+
+.PHONY: all build test $(LANGUAGES)
+all build test: $(LANGUAGES)
+
+$(LANGUAGES):
+	$(MAKE) -C $@
+
 %:
-	$(MAKE) -C go $(MAKECMDGOALS)
+	@set -e; for lang in $(LANGUAGES); do $(MAKE) -C $$lang $@; done
