@@ -13,6 +13,10 @@ use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows_sys::Win32::Security::{
     GetLengthSid, GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
+use windows_sys::Win32::Storage::FileSystem::{
+    BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO, FILE_READ_ATTRIBUTES, FileBasicInfo,
+    GetFileInformationByHandle, GetFileInformationByHandleEx,
+};
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -109,6 +113,41 @@ pub(crate) fn verify_server_owner(server_pid: u32) -> Result<()> {
     }
 }
 
+/// Which file `path` is and when it last changed, beyond length and mtime: `CopyFile` (and so
+/// `std::fs::copy`) gives the copy its source's last-write time, so a replacement can match the
+/// old file in both. A rename-replace gives a new volume/file index; an in-place overwrite bumps
+/// the change time, which `CopyFile` does not carry over.
+pub(crate) fn file_identity(path: &Path) -> io::Result<(u32, u64, i64)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    let file = std::fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .open(path)?;
+    let handle = file.as_raw_handle() as HANDLE;
+    // SAFETY: plain-data out struct, fully written on success.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `handle` is open for the duration of the call; `info` is a valid out pointer.
+    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: plain-data out struct, fully written on success.
+    let mut basic: FILE_BASIC_INFO = unsafe { std::mem::zeroed() };
+    // SAFETY: `basic` is a FILE_BASIC_INFO of exactly the size passed, as FileBasicInfo requires.
+    if unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileBasicInfo,
+            (&mut basic as *mut FILE_BASIC_INFO).cast(),
+            std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    Ok((info.dwVolumeSerialNumber, index, basic.ChangeTime))
+}
+
 /// Whether this process should keep starting up or has handed off to its shadow copy.
 pub(crate) enum Shadow {
     /// We are the shadow copy; `installed` is the original exe to watch and relaunch.
@@ -117,9 +156,13 @@ pub(crate) enum Shadow {
     HandedOff,
 }
 
+/// Byte equality. Length and mtime are not enough: a rebuild can keep both, and `CopyFile`
+/// carries the source's mtime over. Agent binaries are small and this runs only at startup.
 fn same_file_contents(a: &Path, b: &Path) -> bool {
     match (std::fs::metadata(a), std::fs::metadata(b)) {
-        (Ok(a), Ok(b)) => a.len() == b.len() && a.modified().ok() == b.modified().ok(),
+        (Ok(ma), Ok(mb)) if ma.len() == mb.len() => {
+            matches!((std::fs::read(a), std::fs::read(b)), (Ok(x), Ok(y)) if x == y)
+        }
         _ => false,
     }
 }

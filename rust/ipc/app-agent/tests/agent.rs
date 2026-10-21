@@ -453,8 +453,10 @@ fn binary_watch_restarts() {
         let client = app.connect_or_spawn().await.unwrap();
         let first = client.hello().pid;
         set_busy(&client, true).await;
-        // Let the watcher record the original identity, then replace the binary. Different
-        // mtimes are what mark the change, so wait past coarse filesystem timestamps.
+        // Let the watcher record the original identity, then replace the binary. The replacement
+        // has the same length and, on Windows (`CopyFile` keeps the source's mtime), the same
+        // mtime; the watcher tells them apart by inode (Unix) or file index and change time
+        // (Windows). The wait also keeps mtime-only filesystems from seeing equal timestamps.
         tokio::time::sleep(Duration::from_millis(1100)).await;
         reinstall(&installed);
 

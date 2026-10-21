@@ -132,6 +132,9 @@ struct FileId {
     modified: Option<SystemTime>,
     #[cfg(unix)]
     ino: (u64, u64),
+    /// Volume, file index and change time; see [`crate::windows::file_identity`].
+    #[cfg(windows)]
+    id: (u32, u64, i64),
 }
 
 fn file_id(path: &Path) -> Option<FileId> {
@@ -144,6 +147,8 @@ fn file_id(path: &Path) -> Option<FileId> {
             use std::os::unix::fs::MetadataExt;
             (meta.dev(), meta.ino())
         },
+        #[cfg(windows)]
+        id: crate::windows::file_identity(path).ok()?,
     })
 }
 
