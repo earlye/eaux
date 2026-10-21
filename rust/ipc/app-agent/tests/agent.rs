@@ -1,9 +1,10 @@
 //! End-to-end tests against a real, detached dummy agent.
 //!
 //! This binary is its own dummy agent: launched as `agent --dummy-agent <app> <version>
-//! <idle-ms> <watch-ms|off>` it serves; otherwise it runs the tests below, each in its own thread
-//! with its own app name and endpoint so they can run in parallel. Optional positional arguments
-//! filter tests by substring, like libtest.
+//! <idle-ms> <watch-ms|off>` it serves; launched as `agent --dummy-client <app> <endpoint>` it is
+//! a CLI that connects (spawning the agent if needed), prints the agent's pid and exits; otherwise
+//! it runs the tests below, each in its own thread with its own app name and endpoint so they can
+//! run in parallel. Optional positional arguments filter tests by substring, like libtest.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -82,6 +83,26 @@ fn dummy_main(args: &[String]) -> ExitCode {
         .block_on(app.run(Dummy {
             busy: AtomicBool::new(false),
         }))
+}
+
+fn client_main(args: &[String]) -> ExitCode {
+    let [name, endpoint] = args else {
+        eprintln!("usage: --dummy-client <app> <endpoint>");
+        return ExitCode::FAILURE;
+    };
+    let app = App::new(name, "1.0.0")
+        .agent_args(["--dummy-agent", name, "1.0.0", IDLE_MS, "off"])
+        .endpoint(endpoint);
+    match block_on(app.connect_or_spawn()) {
+        Ok(client) => {
+            println!("{}", client.hello().pid);
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -480,6 +501,39 @@ fn binary_watch_restarts() {
     let _ = std::fs::remove_dir_all(installed.parent().unwrap());
 }
 
+/// A CLI run with piped stdout/stderr (`Command::output()`) that cold-starts the agent must not
+/// hand those pipes to the agent, or `output()` waits for EOF until the agent exits.
+fn piped_client_returns() {
+    let fx = Fixture::new("piped", false);
+    let endpoint = fx.endpoint.clone().unwrap();
+    let mut cmd = Command::new(std::env::current_exe().unwrap());
+    cmd.args(["--dummy-client", &fx.name, &endpoint]);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(cmd.output());
+    });
+    let output = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("client's output() did not return: the agent holds its stdout/stderr pipes")
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "client failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let pid: u32 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap();
+    let app = fx.app("1.0.0");
+    block_on(async {
+        let client = app.connect().await.unwrap();
+        assert_eq!(client.hello().pid, pid);
+        client.shutdown().await.unwrap();
+        wait_until_gone(&app, Duration::from_secs(5)).await;
+    });
+}
+
 #[cfg(unix)]
 fn hung_agent_reported() {
     let fx = Fixture::new("hung", false);
@@ -527,6 +581,7 @@ fn tests() -> Vec<Test> {
         ("version_mismatch_reported", version_mismatch_reported),
         ("shadow_copy", shadow_copy),
         ("binary_watch_restarts", binary_watch_restarts),
+        ("piped_client_returns", piped_client_returns),
     ];
     #[cfg(unix)]
     let tests = {
@@ -541,6 +596,9 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("--dummy-agent") {
         return dummy_main(&args[2..]);
+    }
+    if args.get(1).map(String::as_str) == Some("--dummy-client") {
+        return client_main(&args[2..]);
     }
     let filters: Vec<&str> = args[1..]
         .iter()

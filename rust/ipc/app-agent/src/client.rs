@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::process::Child;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
@@ -21,7 +20,7 @@ use crate::error::{Error, Result};
 use crate::locations::{Locations, ensure_private_dir};
 use crate::lock;
 use crate::protocol::{AgentMsg, ClientMsg, ErrorCode, Hello, PROTOCOL_VERSION};
-use crate::spawn::{Output, reap, spawn_detached};
+use crate::spawn::{Child, Output, reap, spawn_detached};
 use crate::transport;
 
 /// The agent runs a different app version or protocol than this client.

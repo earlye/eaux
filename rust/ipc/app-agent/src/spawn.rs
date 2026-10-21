@@ -1,12 +1,16 @@
 //! Launching a detached agent process.
+//!
+//! The agent outlives the CLI that starts it, so it must not keep any of the CLI's handles open:
+//! a caller reading the CLI's stdout to EOF (e.g. `Command::output()`) would wait for the agent to
+//! exit. The child gets exactly null stdin and its stdout/stderr, nothing else.
 
-use std::ffi::OsString;
-use std::fs::OpenOptions;
-use std::io;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
 
-use crate::locations::ensure_parent;
+#[cfg(unix)]
+pub(crate) use std::process::Child;
+
+#[cfg(windows)]
+pub(crate) use crate::windows::{Child, spawn_detached};
 
 /// Where the detached process's stdout/stderr go.
 pub(crate) enum Output<'a> {
@@ -16,14 +20,22 @@ pub(crate) enum Output<'a> {
     Inherit,
 }
 
-/// Start `program` in its own session (Unix) or detached process group (Windows), so it survives
-/// the terminal and the process that started it.
+/// Start `program` in its own session, so it survives the terminal and the process that started
+/// it.
+#[cfg(unix)]
 pub(crate) fn spawn_detached(
     program: &Path,
-    args: &[OsString],
-    env: &[(String, OsString)],
+    args: &[std::ffi::OsString],
+    env: &[(String, std::ffi::OsString)],
     output: Output<'_>,
-) -> io::Result<Child> {
+) -> std::io::Result<Child> {
+    use std::fs::OpenOptions;
+    use std::io;
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    use crate::locations::ensure_parent;
+
     let mut cmd = Command::new(program);
     cmd.args(args).stdin(Stdio::null());
     for (k, v) in env {
@@ -34,26 +46,50 @@ pub(crate) fn spawn_detached(
         let file = OpenOptions::new().create(true).append(true).open(log)?;
         cmd.stdout(file.try_clone()?).stderr(file);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // SAFETY: setsid is async-signal-safe and touches no memory of the parent.
-        unsafe {
-            cmd.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS};
-        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    // SAFETY: plain call, read before forking.
+    let open_max = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
+    let open_max = libc::c_int::try_from(open_max.clamp(256, 1 << 20)).unwrap_or(1 << 20);
+    // SAFETY: setsid, fcntl and close_range are async-signal-safe and touch no memory of the
+    // parent.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            cloexec_from_3(open_max);
+            Ok(())
+        });
     }
     cmd.spawn()
+}
+
+/// Mark every descriptor above stdio close-on-exec, so descriptors this process inherited without
+/// `FD_CLOEXEC` (a make jobserver, a shell's `3>&1`) do not reach the agent. Marking rather than
+/// closing keeps `Command`'s own exec-error pipe working.
+#[cfg(unix)]
+unsafe fn cloexec_from_3(open_max: libc::c_int) {
+    #[cfg(target_os = "linux")]
+    // SAFETY: close_range only changes descriptor flags; failure (pre-5.11 kernel) falls through.
+    if unsafe {
+        libc::syscall(
+            libc::SYS_close_range,
+            3u32,
+            u32::MAX,
+            libc::CLOSE_RANGE_CLOEXEC,
+        )
+    } == 0
+    {
+        return;
+    }
+    for fd in 3..open_max {
+        // SAFETY: fcntl on a descriptor that may not exist just fails with EBADF.
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFD);
+            if flags >= 0 && flags & libc::FD_CLOEXEC == 0 {
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            }
+        }
+    }
 }
 
 /// Reap `child` in the background so it never lingers as a zombie while we keep running.

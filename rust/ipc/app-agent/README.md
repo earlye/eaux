@@ -15,7 +15,7 @@ bump in the meantime as breaking.
 
 ```toml
 [dependencies]
-app-agent = "=0.0.1-alpha.1"
+app-agent = "=0.0.1-alpha.2"
 ```
 
 ## Usage
@@ -134,6 +134,14 @@ listening, it spawns the agent detached (Unix: `setsid`; Windows:
 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, with stdout and stderr going to
 the log) and retries with backoff for up to `spawn_timeout` (5s).
 
+The agent inherits nothing from the CLI but null stdin and the log. A CLI run
+with piped output, e.g. under `Command::output()`, would otherwise hand its
+pipes to the long-lived agent, and its caller would never see EOF. On Unix,
+every descriptor above stderr is marked close-on-exec in the child. On Windows
+the agent is started with `CreateProcessW` and a
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST` naming only its three standard handles;
+`std::process::Command` would pass on every inheritable handle.
+
 When clients race, each may spawn an agent, but only one wins the lock. The
 losers exit with code 75, and every client connects to the winner. If an
 agent exits with any other code before it listens, the client reports
@@ -215,7 +223,8 @@ binary is its own dummy agent: given `--dummy-agent` it serves instead of
 running tests. The tests cover cold start, concurrent clients ending with
 one agent, recovery from `kill -9` with a stale endpoint, `shutdown` with busy
 refusal, idle exit, version mismatch with restart, the Windows shadow copy,
-binary-watch restart, and (Unix) hung-agent reporting. CI runs them on Linux,
+binary-watch restart, a piped CLI whose `output()` returns after it cold-starts
+the agent, and (Unix) hung-agent reporting. CI runs them on Linux,
 macOS and Windows.
 
 ## License
