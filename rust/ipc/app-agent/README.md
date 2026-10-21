@@ -164,7 +164,8 @@ as activity. The default, `None`, never idles out.
 
 **Binary watch** (opt-in, `watch_binary(interval)`). The agent records the
 identity of its installed executable: size, mtime, and on Unix device and
-inode. On Windows that is the installed path, not the shadow copy. When the
+inode; on Windows volume serial, file index and change time. On Windows that
+is the installed path, not the shadow copy. When the
 file changes and the handler is not busy, the agent stops listening, releases
 the lock, starts the new binary with the same arguments, and exits.
 
@@ -178,9 +179,9 @@ another account can deny service but cannot impersonate the agent
 **Windows shadow copy.** A spawned agent first copies itself to
 `%LOCALAPPDATA%\<app>\bin\<exe>-<version>.exe` and relaunches from that copy.
 The installed exe is therefore never locked, and `cargo install` can replace it
-while the agent runs. The copy is made only when it is missing or differs
-from the installed exe in size or mtime. The mtime check means a rebuilt
-binary with the same version number is not masked by an old copy. Each start
+while the agent runs. The copy is made only when it is missing or its bytes
+differ from the installed exe, so a rebuilt binary with the same version
+number is not masked by an old copy. Each start
 from the shadow directory deletes the other, stale copies there.
 
 **Envelope.** Each line is one JSON object. The client sends
