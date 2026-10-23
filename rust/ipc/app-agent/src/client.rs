@@ -98,6 +98,16 @@ impl std::fmt::Debug for Client {
     }
 }
 
+/// Wait for the agent's empty acknowledgement of a built-in `what` message.
+async fn expect_ack(rx: &mut mpsc::UnboundedReceiver<AgentMsg>, what: &str) -> Result<()> {
+    match rx.recv().await {
+        Some(AgentMsg::Response { .. }) => Ok(()),
+        Some(AgentMsg::Error { code, message, .. }) => Err(remote_error(code, message)),
+        Some(_) => Err(Error::Protocol(format!("unexpected reply to {what}"))),
+        None => Err(Error::Disconnected),
+    }
+}
+
 fn remote_error(code: ErrorCode, message: String) -> Error {
     match code {
         ErrorCode::Busy => Error::Busy(message),
@@ -166,12 +176,7 @@ impl Client {
     /// On success, waits (briefly) for the agent to close the connection.
     pub async fn shutdown(&self) -> Result<()> {
         let (_, mut rx) = self.conn.start(|id| ClientMsg::Shutdown { id })?;
-        match rx.recv().await {
-            Some(AgentMsg::Response { .. }) => {}
-            Some(AgentMsg::Error { code, message, .. }) => return Err(remote_error(code, message)),
-            Some(_) => return Err(Error::Protocol("unexpected reply to shutdown".into())),
-            None => return Err(Error::Disconnected),
-        }
+        expect_ack(&mut rx, "shutdown").await?;
         let mut closed = self.closed.clone();
         let _ = tokio::time::timeout(
             self.app.spawn_timeout_value(),
@@ -179,6 +184,41 @@ impl Client {
         )
         .await;
         Ok(())
+    }
+
+    /// Ask the agent to stop once it is idle (not busy, no request in flight), and wait up to
+    /// `timeout`, covering both the acknowledgement and the agent closing the connection. If the
+    /// time runs out after the acknowledgement, returns [`Error::StillDraining`]: the drain stays
+    /// in effect. If it runs out before, returns [`Error::Hung`]: the drain was sent but not
+    /// acknowledged, so whether the agent received it is unknown; if it did, the drain is in
+    /// effect once the agent resumes. The agent keeps serving requests while draining unless the
+    /// handler refuses them.
+    ///
+    /// Fails at once with [`Error::Unsupported`] if the agent predates `drain` (see
+    /// [`Hello::drain`]); use [`Client::shutdown`] for it instead. Fails with [`Error::Busy`] if
+    /// the agent is already restarting into a changed binary. [`Error::Disconnected`] can mean
+    /// the agent applied the drain but could not deliver the acknowledgement.
+    pub async fn drain(&self, timeout: Duration) -> Result<()> {
+        if !self.hello.drain {
+            return Err(Error::Unsupported("drain"));
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        let (_, mut rx) = self.conn.start(|id| ClientMsg::Drain { id })?;
+        match tokio::time::timeout_at(deadline, expect_ack(&mut rx, "drain")).await {
+            Ok(acked) => acked?,
+            Err(_) => {
+                return Err(Error::Hung {
+                    pid: Some(self.hello.pid),
+                });
+            }
+        }
+        let mut closed = self.closed.clone();
+        match tokio::time::timeout_at(deadline, closed.wait_for(|closed| *closed)).await {
+            Ok(_) => Ok(()),
+            Err(_) => Err(Error::StillDraining {
+                pid: self.hello.pid,
+            }),
+        }
     }
 
     /// Shut the agent down (unless busy) and connect to a freshly spawned one, e.g. after

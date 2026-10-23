@@ -15,7 +15,7 @@ bump in the meantime as breaking.
 
 ```toml
 [dependencies]
-app-agent = "=0.0.1-alpha.2"
+app-agent = "=0.0.1-alpha.3"
 ```
 
 ## Usage
@@ -51,7 +51,12 @@ impl Handler for Agent {
     }
 
     fn busy(&self) -> Option<String> {
-        None // Some("2 jobs running") refuses shutdown and postpones idle exit and restarts
+        None // Some("2 jobs running") refuses shutdown; postpones idle exit, restarts, drain
+    }
+
+    fn draining(&self) {
+        // A client asked the agent to drain. The crate still dispatches requests to `handle`;
+        // refuse new jobs from here on.
     }
 }
 
@@ -86,7 +91,8 @@ producing them.
 | `Client::call` / `Client::subscribe` | One response, or a `Subscription` stream of events. |
 | `Client::hello` / `Client::mismatch` | What the agent reported, and whether its version or protocol differs. |
 | `Client::shutdown` / `Client::restart` | Graceful stop (refused with `Error::Busy` while busy), and stop-then-respawn. |
-| `Handler` | The app's one trait: `handle` returns `Reply::Response` or `Reply::Events`; `busy` says "won't stop". |
+| `Client::drain` | Stop once idle (not busy, no request in flight), waiting up to a timeout (`Error::StillDraining` if it runs out after the acknowledgement; the drain stays in effect). |
+| `Handler` | The app's one trait: `handle` returns `Reply::Response` or `Reply::Events`; `busy` says "won't stop"; `draining` says a drain began. |
 | `Error`, `Stopped`, `Hello`, `Mismatch`, `EXIT_ALREADY_RUNNING`, `PROTOCOL_VERSION`, `endpoint_env_var` | Supporting types and constants. |
 
 The transport is private. The wire format is JSON lines over
@@ -151,12 +157,31 @@ file. It never kills the agent.
 
 **Built-in messages.**
 
-- `hello` returns the protocol version, pid, start time and app version.
-  `Client::mismatch` compares them with the client's; the app decides what to
-  do about a mismatch.
+- `hello` returns the protocol version, pid, start time, app version, and
+  whether the agent understands `drain` (`Hello::drain`; agents before
+  0.0.1-alpha.3 omit it). `Client::mismatch` compares the versions with the
+  client's; the app decides what to do about a mismatch. The crate never
+  refuses or restarts an agent over one.
 - `shutdown` stops the agent gracefully. While the handler's `busy()` returns
   `Some`, the agent refuses with `Error::Busy`, so an app can restart on
   mismatch but not while it has jobs running.
+- `drain` asks the agent to stop once it is idle: `busy()` returns `None` and
+  no request is in flight (open subscriptions count). The agent acknowledges
+  at once, calls the handler's `draining()` (once), and stops as soon as it is
+  idle, which may be immediately. The crate keeps dispatching requests while
+  draining; refusing new work is the handler's job, typically from
+  `draining()` on. A drain wins over a pending binary-watch restart: the agent
+  stops and starts nothing. A drain that arrives once that restart is under
+  way is refused with `Error::Busy`. A request stays in flight until its last
+  reply is written, so a drain never cuts that reply off.
+  `Client::drain(timeout)` waits up to `timeout` in total for the
+  acknowledgement and then for the agent to close the connection. Timing out
+  before the acknowledgement returns `Error::Hung`: the drain was sent but not
+  acknowledged, so whether the agent received it is unknown; if it did, the
+  drain is in effect once the agent resumes. Timing out after it returns
+  `Error::StillDraining`, and the agent
+  still stops once idle. Against an agent that predates `drain` it
+  fails at once with `Error::Unsupported`; use `shutdown` there.
 
 **Idle exit.** With `idle_timeout(Some(d))`, the agent exits once no request
 has been in flight for `d` and the handler is not busy. `hello` does not count
@@ -165,9 +190,9 @@ as activity. The default, `None`, never idles out.
 **Binary watch** (opt-in, `watch_binary(interval)`). The agent records the
 identity of its installed executable: size, mtime, and on Unix device and
 inode; on Windows volume serial, file index and change time. On Windows that
-is the installed path, not the shadow copy. When the
-file changes and the handler is not busy, the agent stops listening, releases
-the lock, starts the new binary with the same arguments, and exits.
+is the installed path, not the shadow copy. When the file changes, the
+handler is not busy and no drain is pending, the agent stops listening,
+releases the lock, starts the new binary with the same arguments, and exits.
 
 **Windows security.** The pipe's DACL grants access only to the current user
 and SYSTEM, and the pipe rejects remote clients. Before trusting the pipe, the
@@ -185,7 +210,7 @@ number is not masked by an old copy. Each start
 from the shadow directory deletes the other, stale copies there.
 
 **Envelope.** Each line is one JSON object. The client sends
-`{"kind":"hello"|"shutdown"|"request"|"cancel","id":N,...}`, with the app's
+`{"kind":"hello"|"shutdown"|"drain"|"request"|"cancel","id":N,...}`, with the app's
 request under `body`. The agent answers with `kind` set to `response`,
 `event`, `end` or `error`, carrying the same `id`. App types are any serde
 types. Requests on one connection run concurrently.
@@ -223,9 +248,12 @@ The integration tests (`tests/agent.rs`) start real detached agents. The test
 binary is its own dummy agent: given `--dummy-agent` it serves instead of
 running tests. The tests cover cold start, concurrent clients ending with
 one agent, recovery from `kill -9` with a stale endpoint, `shutdown` with busy
-refusal, idle exit, version mismatch with restart, the Windows shadow copy,
-binary-watch restart, a piped CLI whose `output()` returns after it cold-starts
-the agent, and (Unix) hung-agent reporting. CI runs them on Linux,
+refusal, `drain` (idle, waiting out busy and requests in flight, timing out
+before and after the acknowledgement, refusal by an agent that predates it,
+winning over a binary change made while busy, and keeping a binary change
+made after it from restarting an agent with a request in flight), idle exit, version mismatch with restart, the Windows
+shadow copy, binary-watch restart, a piped CLI whose `output()` returns after
+it cold-starts the agent, and (Unix) hung-agent reporting. CI runs them on Linux,
 macOS and Windows.
 
 ## License

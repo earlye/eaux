@@ -12,15 +12,26 @@ pub enum Error {
     AlreadyRunning { pid: Option<u32> },
     /// No agent is listening on the endpoint (returned by [`App::connect`](crate::App::connect)).
     NotRunning,
-    /// The agent accepted the connection but did not answer `hello` in time.
-    /// The crate never kills it; `pid` comes from the lock file.
+    /// The agent accepted the connection but did not answer `hello` in time, or did not
+    /// acknowledge [`Client::drain`](crate::Client::drain) before its timeout. The drain was
+    /// sent, so whether the agent received it is unknown; if it did, the drain is in effect once
+    /// the agent resumes.
+    /// The crate never kills it. `pid` comes from the lock file when connecting, or from
+    /// `hello` for `drain`.
     Hung { pid: Option<u32> },
     /// The spawned agent exited with an unexpected status before it started listening.
     AgentFailed { status: ExitStatus, log: PathBuf },
     /// The agent never became reachable within the spawn timeout.
     SpawnTimedOut { log: PathBuf },
-    /// The agent refused to stop because the app says it is busy.
+    /// The agent refused to stop because the app says it is busy, or refused a drain because
+    /// it is already restarting into a new binary.
     Busy(String),
+    /// The agent had not stopped when [`Client::drain`](crate::Client::drain) gave up waiting.
+    /// The drain stays in effect: the agent stops once it is idle (the handler not busy and no
+    /// request in flight).
+    StillDraining { pid: u32 },
+    /// The agent is too old to understand the named request.
+    Unsupported(&'static str),
     /// The app's handler returned an error.
     Remote(String),
     /// Windows only: the named pipe is served by a process owned by another user.
@@ -55,6 +66,11 @@ impl fmt::Display for Error {
                 write!(f, "agent did not start in time; see {}", log.display())
             }
             Error::Busy(reason) => write!(f, "agent is busy: {reason}"),
+            Error::StillDraining { pid } => write!(
+                f,
+                "agent (pid {pid}) is still draining; it will stop once idle"
+            ),
+            Error::Unsupported(what) => write!(f, "agent does not support {what}"),
             Error::Remote(message) => write!(f, "agent error: {message}"),
             Error::NotOwner { pid } => write!(
                 f,

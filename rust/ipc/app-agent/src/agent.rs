@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -46,7 +46,7 @@ impl<R, E> Reply<R, E> {
 
 /// The app's side of the agent: one handler for every app-defined request.
 ///
-/// `hello` and `shutdown` are built in and never reach the handler.
+/// `hello`, `shutdown` and `drain` are built in and never reach the handler.
 pub trait Handler: Send + Sync + 'static {
     /// The app's request type, as sent by `call` and `subscribe`.
     type Request: DeserializeOwned + Send + 'static;
@@ -63,10 +63,16 @@ pub trait Handler: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Reply<Self::Response, Self::Event>, String>> + Send;
 
     /// `Some(reason)` while the agent must not stop: `shutdown` is refused with
-    /// [`Error::Busy`], idle exit waits, and a binary-watch restart waits.
+    /// [`Error::Busy`], and idle exit, a binary-watch restart and a drain wait.
     fn busy(&self) -> Option<String> {
         None
     }
+
+    /// Called once, when a client first asks the agent to drain. The agent stops once it is idle:
+    /// [`busy`](Handler::busy) returns `None` and no request is in flight. The crate keeps
+    /// dispatching requests to [`handle`](Handler::handle) while draining; refusing new work is
+    /// the handler's job, from here on.
+    fn draining(&self) {}
 }
 
 /// Why [`App::serve`] returned.
@@ -75,6 +81,8 @@ pub trait Handler: Send + Sync + 'static {
 pub enum Stopped {
     /// A client sent `shutdown`.
     Shutdown,
+    /// A client sent `drain` and the agent became idle.
+    Drained,
     /// Nothing happened for the idle timeout.
     IdleTimeout,
     /// The watched binary changed; a new agent was started from it.
@@ -91,6 +99,9 @@ struct Shared<H> {
     handler: H,
     hello: Hello,
     in_flight: AtomicUsize,
+    draining: AtomicBool,
+    /// A drain or a binary-change restart, whichever came first; the other is then refused.
+    committed: Mutex<Option<Stopped>>,
     last_activity: Mutex<Instant>,
     stop: mpsc::UnboundedSender<Stopped>,
 }
@@ -104,6 +115,18 @@ impl<H> Shared<H> {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .elapsed()
+    }
+    /// Commit to stopping for `reason`; `false` if already committed to another reason.
+    fn commit(&self, reason: Stopped) -> bool {
+        let mut committed = self.committed.lock().unwrap_or_else(|e| e.into_inner());
+        *committed.get_or_insert(reason) == reason
+    }
+}
+
+impl<H: Handler> Shared<H> {
+    /// No request in flight and the handler not busy.
+    fn idle(&self) -> bool {
+        self.in_flight.load(Ordering::SeqCst) == 0 && self.handler.busy().is_none()
     }
 }
 
@@ -202,8 +225,11 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
             pid: std::process::id(),
             started_at: SystemTime::now(),
             app_version: app.version().to_string(),
+            drain: true,
         },
         in_flight: AtomicUsize::new(0),
+        draining: AtomicBool::new(false),
+        committed: Mutex::new(None),
         last_activity: Mutex::new(Instant::now()),
         stop: stop_tx,
     });
@@ -235,11 +261,12 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
             },
             Some(reason) = stop_rx.recv() => break reason,
             _ = ticker.tick() => {
-                let idle = shared.in_flight.load(Ordering::SeqCst) == 0;
+                if shared.draining.load(Ordering::SeqCst) && shared.idle() {
+                    break Stopped::Drained;
+                }
                 if let Some(timeout) = idle_timeout
-                    && idle
                     && shared.idle_for() >= timeout
-                    && shared.handler.busy().is_none()
+                    && shared.idle()
                 {
                     break Stopped::IdleTimeout;
                 }
@@ -248,7 +275,13 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
                 {
                     last_watch = Instant::now();
                     let now = file_id(&installed);
-                    if now.is_some() && now != *original && shared.handler.busy().is_none() {
+                    if now.is_some()
+                        && now != *original
+                        && shared.handler.busy().is_none()
+                        // `commit` fails once a drain is committed, so a drain suppresses the
+                        // restart; the agent stops once idle instead.
+                        && shared.commit(Stopped::Restarted)
+                    {
                         break Stopped::Restarted;
                     }
                 }
@@ -309,11 +342,32 @@ async fn connection<H: Handler>(stream: transport::Stream, shared: Arc<Shared<H>
                     ));
                     continue;
                 }
-                let (flushed_tx, flushed_rx) = oneshot::channel();
-                let body = serde_json::Value::Null;
-                let _ = tx.send((AgentMsg::Response { id, body }, Some(flushed_tx)));
-                let _ = flushed_rx.await;
+                send_flushed(&tx, ack(id)).await;
                 let _ = shared.stop.send(Stopped::Shutdown);
+            }
+            // Refused once a binary-change restart is committed, which the drain could no longer
+            // stop. Acknowledged before the flag is set, so a tick cannot stop the agent first.
+            // It stops now if idle (not busy, no request in flight), else on a later tick.
+            ClientMsg::Drain { id } => {
+                shared.touch();
+                if !shared.commit(Stopped::Drained) {
+                    let _ = tx.send((
+                        AgentMsg::Error {
+                            id,
+                            code: ErrorCode::Busy,
+                            message: "restarting into a new binary".into(),
+                        },
+                        None,
+                    ));
+                    continue;
+                }
+                send_flushed(&tx, ack(id)).await;
+                if !shared.draining.swap(true, Ordering::SeqCst) {
+                    shared.handler.draining();
+                }
+                if shared.idle() {
+                    let _ = shared.stop.send(Stopped::Drained);
+                }
             }
             ClientMsg::Cancel { id } => {
                 if let Some(task) = tasks.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
@@ -328,7 +382,11 @@ async fn connection<H: Handler>(stream: transport::Stream, shared: Arc<Shared<H>
                 let mut registry = tasks.lock().unwrap_or_else(|e| e.into_inner());
                 let handle = tokio::spawn(async move {
                     let _guard = guard;
-                    run_request(&shared.handler, id, body, &tx).await;
+                    // The request stays in flight until its last reply is written, so a drain or
+                    // idle exit cannot cut that reply off.
+                    if let Some(last) = run_request(&shared.handler, id, body, &tx).await {
+                        send_flushed(&tx, last).await;
+                    }
                     tasks_for_task
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
@@ -346,31 +404,38 @@ async fn connection<H: Handler>(stream: transport::Stream, shared: Arc<Shared<H>
     let _ = writer_task.await;
 }
 
+/// The empty acknowledgement of a built-in message.
+fn ack(id: u64) -> AgentMsg {
+    let body = serde_json::Value::Null;
+    AgentMsg::Response { id, body }
+}
+
+/// Send `msg` and wait until it is written (or the write failed).
+async fn send_flushed(tx: &mpsc::UnboundedSender<Outgoing>, msg: AgentMsg) {
+    let (flushed_tx, flushed_rx) = oneshot::channel();
+    let _ = tx.send((msg, Some(flushed_tx)));
+    let _ = flushed_rx.await;
+}
+
+/// Answer one request, sending every event; returns the final reply for the caller to send, or
+/// `None` if the connection is gone.
 async fn run_request<H: Handler>(
     handler: &H,
     id: u64,
     body: serde_json::Value,
     tx: &mpsc::UnboundedSender<Outgoing>,
-) {
-    let send = |msg: AgentMsg| tx.send((msg, None)).is_ok();
+) -> Option<AgentMsg> {
     let error = |code, message: String| AgentMsg::Error { id, code, message };
     let request = match serde_json::from_value::<H::Request>(body) {
         Ok(request) => request,
-        Err(e) => {
-            send(error(ErrorCode::BadRequest, e.to_string()));
-            return;
-        }
+        Err(e) => return Some(error(ErrorCode::BadRequest, e.to_string())),
     };
     match handler.handle(request).await {
-        Err(message) => {
-            send(error(ErrorCode::Handler, message));
-        }
-        Ok(Reply::Response(response)) => {
-            send(match serde_json::to_value(response) {
-                Ok(body) => AgentMsg::Response { id, body },
-                Err(e) => error(ErrorCode::Handler, e.to_string()),
-            });
-        }
+        Err(message) => Some(error(ErrorCode::Handler, message)),
+        Ok(Reply::Response(response)) => Some(match serde_json::to_value(response) {
+            Ok(body) => AgentMsg::Response { id, body },
+            Err(e) => error(ErrorCode::Handler, e.to_string()),
+        }),
         Ok(Reply::Events(mut events)) => loop {
             let item = std::future::poll_fn(|cx| events.as_mut().poll_next(cx)).await;
             let msg = match item {
@@ -381,9 +446,11 @@ async fn run_request<H: Handler>(
                     Err(e) => error(ErrorCode::Handler, e.to_string()),
                 },
             };
-            let last = !matches!(msg, AgentMsg::Event { .. });
-            if !send(msg) || last {
-                break;
+            if !matches!(msg, AgentMsg::Event { .. }) {
+                break Some(msg);
+            }
+            if tx.send((msg, None)).is_err() {
+                break None;
             }
         },
     }

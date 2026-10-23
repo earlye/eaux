@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Bumped whenever the envelope changes incompatibly. `hello` must stay readable across versions.
+/// A new message kind that older agents reject is announced by a [`Hello`] field instead, so
+/// clients and agents that differ only by it are not reported as a mismatch.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Client to agent.
@@ -16,6 +18,10 @@ pub(crate) enum ClientMsg {
         id: u64,
     },
     Shutdown {
+        id: u64,
+    },
+    /// Stop once idle: the handler not busy and no request in flight.
+    Drain {
         id: u64,
     },
     Request {
@@ -84,6 +90,10 @@ pub struct Hello {
     pub started_at: SystemTime,
     /// The app version the agent was built with.
     pub app_version: String,
+    /// Whether the agent understands `drain`. Agents before 0.0.1-alpha.3 omit it, which reads
+    /// as `false`.
+    #[serde(default)]
+    pub drain: bool,
 }
 
 #[cfg(test)]
@@ -104,5 +114,14 @@ mod tests {
         let msg: ClientMsg =
             serde_json::from_str(r#"{"kind":"request","id":1,"body":{"x":1}}"#).unwrap();
         assert!(matches!(msg, ClientMsg::Request { id: 1, .. }));
+    }
+
+    #[test]
+    fn hello_without_drain_is_old_agent() {
+        let hello: Hello = serde_json::from_str(
+            r#"{"protocol":1,"pid":7,"started_at":{"secs_since_epoch":0,"nanos_since_epoch":0},"app_version":"1"}"#,
+        )
+        .unwrap();
+        assert!(!hello.drain);
     }
 }
