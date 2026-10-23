@@ -48,3 +48,20 @@ own**, but kills when the caller explicitly asks. The docs and messages need upd
 - `rust/ipc/app-agent/src/protocol.rs:82`: `Hello::pid`.
 - `rust/ipc/app-agent/src/windows.rs`: existing Windows process code, likely home for
   `TerminateProcess`.
+
+## Grill Log
+
+### 2026-10-23
+
+- Q: How do we confirm the pid before killing (and guard against pid reuse)? — A: Use the
+  kernel-reported peer pid of the agent's endpoint, not the lock file: `SO_PEERCRED` (Linux),
+  `LOCAL_PEERPID` (macOS), `GetNamedPipeServerProcessId` (Windows, already used by
+  `transport::peer_pid`). The agent takes the lock before binding, so the listener is the lock
+  holder, and the kernel's answer can't be stale. A hung agent still completes connects via the
+  listen backlog. Pin the process before killing: Linux pidfd opened on the peer pid, then confirm
+  the connection is still open, then kill through the pidfd; Windows `OpenProcess(PROCESS_TERMINATE)`
+  then re-check the pipe server pid; macOS has no pidfd, leaving a small residual race. If nothing
+  answers on the endpoint but the lock is held, Linux may fall back to `/proc/locks`; otherwise
+  refuse with an error, never kill. Verify with a CI test on all three OSes (the matrix in
+  `.github/workflows/rust.yml` already covers them): a child binds and never accepts; assert peer
+  pid equals the child pid, and record behaviour once the backlog is full.
