@@ -55,7 +55,8 @@ impl Handler for Agent {
     }
 
     fn draining(&self) {
-        // A client asked the agent to drain: refuse new jobs from here on.
+        // A client asked the agent to drain. The crate still dispatches requests to `handle`;
+        // refuse new jobs from here on.
     }
 }
 
@@ -90,7 +91,7 @@ producing them.
 | `Client::call` / `Client::subscribe` | One response, or a `Subscription` stream of events. |
 | `Client::hello` / `Client::mismatch` | What the agent reported, and whether its version or protocol differs. |
 | `Client::shutdown` / `Client::restart` | Graceful stop (refused with `Error::Busy` while busy), and stop-then-respawn. |
-| `Client::drain` | Stop once no longer busy, waiting up to a timeout (`Error::StillDraining` if it runs out; the drain stays in effect). |
+| `Client::drain` | Stop once idle (not busy, no request in flight), waiting up to a timeout (`Error::StillDraining` if it runs out; the drain stays in effect). |
 | `Handler` | The app's one trait: `handle` returns `Reply::Response` or `Reply::Events`; `busy` says "won't stop"; `draining` says a drain began. |
 | `Error`, `Stopped`, `Hello`, `Mismatch`, `EXIT_ALREADY_RUNNING`, `PROTOCOL_VERSION`, `endpoint_env_var` | Supporting types and constants. |
 
@@ -162,13 +163,16 @@ file. It never kills the agent.
 - `shutdown` stops the agent gracefully. While the handler's `busy()` returns
   `Some`, the agent refuses with `Error::Busy`, so an app can restart on
   mismatch but not while it has jobs running.
-- `drain` asks the agent to stop once `busy()` returns `None`. The agent
-  acknowledges at once, calls the handler's `draining()` (once) so the app can
-  refuse new work, and stops as soon as it is not busy, which is immediately
-  if it is idle. A drain wins over a pending binary-watch restart: the agent
-  stops and starts nothing. `Client::drain(timeout)` waits for the agent to
-  close the connection; if the timeout expires it returns
-  `Error::StillDraining`, and the agent still stops once it is idle.
+- `drain` asks the agent to stop once it is idle: `busy()` returns `None` and
+  no request is in flight (open subscriptions count). The agent acknowledges
+  at once, calls the handler's `draining()` (once), and stops as soon as it is
+  idle, which may be immediately. The crate keeps dispatching requests while
+  draining; refusing new work is the handler's job, typically from
+  `draining()` on. A drain wins over a pending binary-watch restart: the agent
+  stops and starts nothing. `Client::drain(timeout)` waits, for the
+  acknowledgement and then for the agent to close the connection, up to
+  `timeout` in all; if it runs out it returns `Error::StillDraining`, and the
+  agent still stops once it is idle.
 
 **Idle exit.** With `idle_timeout(Some(d))`, the agent exits once no request
 has been in flight for `d` and the handler is not busy. `hello` does not count
@@ -235,8 +239,8 @@ The integration tests (`tests/agent.rs`) start real detached agents. The test
 binary is its own dummy agent: given `--dummy-agent` it serves instead of
 running tests. The tests cover cold start, concurrent clients ending with
 one agent, recovery from `kill -9` with a stale endpoint, `shutdown` with busy
-refusal, `drain` (idle, waiting out busy, timing out, and winning over a
-binary-watch restart), idle exit, version mismatch with restart, the Windows
+refusal, `drain` (idle, waiting out busy and requests in flight, timing out,
+and winning over a binary-watch restart), idle exit, version mismatch with restart, the Windows
 shadow copy, binary-watch restart, a piped CLI whose `output()` returns after
 it cold-starts the agent, and (Unix) hung-agent reporting. CI runs them on Linux,
 macOS and Windows.

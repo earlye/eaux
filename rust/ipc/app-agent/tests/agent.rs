@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use app_agent::{App, Client, Error, Handler, Reply};
@@ -25,14 +25,15 @@ enum Req {
     Echo { text: String },
     Count { n: u32, delay_ms: u64 },
     SetBusy { busy: bool },
-    IsDraining,
+    Drains,
     Exe,
     Fail,
 }
 
 struct Dummy {
     busy: AtomicBool,
-    draining: AtomicBool,
+    /// How many times `draining()` was called.
+    drains: AtomicU32,
 }
 
 impl Handler for Dummy {
@@ -56,7 +57,7 @@ impl Handler for Dummy {
                 self.busy.store(busy, Ordering::SeqCst);
                 Reply::Response(Value::Null)
             }
-            Req::IsDraining => Reply::Response(json!(self.draining.load(Ordering::SeqCst))),
+            Req::Drains => Reply::Response(json!(self.drains.load(Ordering::SeqCst))),
             Req::Exe => Reply::Response(json!(std::env::current_exe().unwrap())),
             Req::Fail => return Err("boom".into()),
         })
@@ -69,7 +70,7 @@ impl Handler for Dummy {
     }
 
     fn draining(&self) {
-        self.draining.store(true, Ordering::SeqCst);
+        self.drains.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -89,7 +90,7 @@ fn dummy_main(args: &[String]) -> ExitCode {
         .unwrap()
         .block_on(app.run(Dummy {
             busy: AtomicBool::new(false),
-            draining: AtomicBool::new(false),
+            drains: AtomicU32::new(0),
         }))
 }
 
@@ -229,6 +230,20 @@ async fn wait_until_gone(app: &App, within: Duration) {
             }
             other => panic!("agent still there after {within:?}: {other:?}"),
         }
+    }
+}
+
+/// Poll the agent log until it contains `needle`. The agent logs why it stopped only after it
+/// stops listening, so `wait_until_gone` can return first.
+async fn wait_for_log(fx: &Fixture, needle: &str, within: Duration) {
+    let deadline = Instant::now() + within;
+    while !fx.log().contains(needle) {
+        assert!(
+            Instant::now() < deadline,
+            "no {needle:?} in log:\n{}",
+            fx.log()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -399,7 +414,7 @@ fn drain_when_idle() {
         let client = app.connect_or_spawn().await.unwrap();
         client.drain(Duration::from_secs(5)).await.unwrap();
         wait_until_gone(&app, Duration::from_secs(5)).await;
-        assert!(fx.log().contains("stopping: Drained"), "log:\n{}", fx.log());
+        wait_for_log(&fx, "stopping: Drained", Duration::from_secs(2)).await;
     });
 }
 
@@ -412,15 +427,48 @@ fn drain_waits_for_busy() {
         let started = Instant::now();
         let finish = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            let draining: bool = worker.call(&Req::IsDraining).await.unwrap();
+            let drains: u32 = worker.call(&Req::Drains).await.unwrap();
             set_busy(&worker, false).await;
-            draining
+            drains
         });
         let client = app.connect().await.unwrap();
         client.drain(Duration::from_secs(10)).await.unwrap();
         assert!(started.elapsed() >= Duration::from_millis(500));
-        assert!(finish.await.unwrap(), "handler did not see the drain");
+        assert_eq!(finish.await.unwrap(), 1, "handler did not see the drain");
         wait_until_gone(&app, Duration::from_secs(5)).await;
+        wait_for_log(&fx, "stopping: Drained", Duration::from_secs(2)).await;
+    });
+}
+
+/// A request in flight when the drain arrives finishes before the agent stops.
+fn drain_waits_for_in_flight() {
+    let fx = Fixture::new("drain-in-flight", false);
+    let app = fx.app("1.0.0");
+    block_on(async {
+        let worker = app.connect_or_spawn().await.unwrap();
+        let mut sub = worker
+            .subscribe::<_, u32>(&Req::Count {
+                n: 5,
+                delay_ms: 100,
+            })
+            .await
+            .unwrap();
+        assert_eq!(sub.next().await.unwrap().unwrap(), 0);
+        let rest = tokio::spawn(async move {
+            let _worker = worker;
+            sub.collect::<Vec<_>>().await
+        });
+        let client = app.connect().await.unwrap();
+        client.drain(Duration::from_secs(10)).await.unwrap();
+        let rest: Vec<u32> = rest
+            .await
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(rest, vec![1, 2, 3, 4]);
+        wait_until_gone(&app, Duration::from_secs(5)).await;
+        wait_for_log(&fx, "stopping: Drained", Duration::from_secs(2)).await;
     });
 }
 
@@ -437,9 +485,13 @@ fn drain_timeout_stays_in_effect() {
             "{err:?}"
         );
         // Still serving, still draining, and plain shutdown is still refused while busy.
-        let draining: bool = worker.call(&Req::IsDraining).await.unwrap();
-        assert!(draining);
         assert!(matches!(client.shutdown().await, Err(Error::Busy(_))));
+
+        // A retry after the timeout does not tell the handler again.
+        let err = client.drain(Duration::from_millis(300)).await.unwrap_err();
+        assert!(matches!(err, Error::StillDraining { .. }), "{err:?}");
+        let drains: u32 = worker.call(&Req::Drains).await.unwrap();
+        assert_eq!(drains, 1);
 
         set_busy(&worker, false).await;
         wait_until_gone(&app, Duration::from_secs(5)).await;
@@ -544,9 +596,9 @@ fn drain_beats_binary_restart() {
 
         set_busy(&client, false).await;
         wait_until_gone(&app, Duration::from_secs(5)).await;
+        wait_for_log(&fx, "stopping: Drained", Duration::from_secs(2)).await;
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert!(matches!(app.connect().await, Err(Error::NotRunning)));
-        assert!(fx.log().contains("stopping: Drained"), "log:\n{}", fx.log());
     });
     drop(fx);
     let _ = std::fs::remove_dir_all(installed.parent().unwrap());
@@ -667,6 +719,7 @@ fn tests() -> Vec<Test> {
         ("shutdown", shutdown),
         ("drain_when_idle", drain_when_idle),
         ("drain_waits_for_busy", drain_waits_for_busy),
+        ("drain_waits_for_in_flight", drain_waits_for_in_flight),
         (
             "drain_timeout_stays_in_effect",
             drain_timeout_stays_in_effect,

@@ -27,12 +27,14 @@ shut down without telling it to drain.
 - Killing the agent. Tracked separately in
   `issues/issue-01a169bd-15ef-7228-b374-b25abe625813-app-agent-force-kill.md`.
 
-## Open questions
+## Decisions
 
-- Should a busy plain `Shutdown` keep failing with `Busy`? The requester assumes yes, for
-  compatibility.
-- How should `restart()` relate to drain? For example, should restart drain first, and should
-  a drain cancel or win over a pending binary-change restart?
+- A busy plain `Shutdown` still fails with `Busy`, for compatibility.
+- A drain wins over a pending binary-change restart: the agent stops and does not restart.
+- Explicit `Client::restart()` is unchanged and does not drain.
+- The crate does not refuse requests while draining. The handler does, from the `draining()`
+  hook on.
+- A drain stops the agent once it is idle: `busy()` returns `None` and no request is in flight.
 
 ## Relevant files
 

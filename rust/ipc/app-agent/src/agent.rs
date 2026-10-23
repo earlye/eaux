@@ -68,8 +68,10 @@ pub trait Handler: Send + Sync + 'static {
         None
     }
 
-    /// Called once, when a client first asks the agent to drain. The agent stops as soon as
-    /// [`busy`](Handler::busy) returns `None`, so the app should refuse new work from here on.
+    /// Called once, when a client first asks the agent to drain. The agent stops once it is idle:
+    /// [`busy`](Handler::busy) returns `None` and no request is in flight. The crate keeps
+    /// dispatching requests to [`handle`](Handler::handle) while draining; refusing new work is
+    /// the handler's job, from here on.
     fn draining(&self) {}
 }
 
@@ -79,7 +81,7 @@ pub trait Handler: Send + Sync + 'static {
 pub enum Stopped {
     /// A client sent `shutdown`.
     Shutdown,
-    /// A client sent `drain` and the handler was no longer busy.
+    /// A client sent `drain` and the agent became idle.
     Drained,
     /// Nothing happened for the idle timeout.
     IdleTimeout,
@@ -111,6 +113,13 @@ impl<H> Shared<H> {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .elapsed()
+    }
+}
+
+impl<H: Handler> Shared<H> {
+    /// No request in flight and the handler not busy.
+    fn idle(&self) -> bool {
+        self.in_flight.load(Ordering::SeqCst) == 0 && self.handler.busy().is_none()
     }
 }
 
@@ -244,14 +253,12 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
             Some(reason) = stop_rx.recv() => break reason,
             _ = ticker.tick() => {
                 // Checked first, so a drain stops rather than restarts on a binary change.
-                if shared.draining.load(Ordering::SeqCst) && shared.handler.busy().is_none() {
+                if shared.draining.load(Ordering::SeqCst) && shared.idle() {
                     break Stopped::Drained;
                 }
-                let idle = shared.in_flight.load(Ordering::SeqCst) == 0;
                 if let Some(timeout) = idle_timeout
-                    && idle
                     && shared.idle_for() >= timeout
-                    && shared.handler.busy().is_none()
+                    && shared.idle()
                 {
                     break Stopped::IdleTimeout;
                 }
@@ -321,24 +328,18 @@ async fn connection<H: Handler>(stream: transport::Stream, shared: Arc<Shared<H>
                     ));
                     continue;
                 }
-                let (flushed_tx, flushed_rx) = oneshot::channel();
-                let body = serde_json::Value::Null;
-                let _ = tx.send((AgentMsg::Response { id, body }, Some(flushed_tx)));
-                let _ = flushed_rx.await;
+                ack_flushed(&tx, id).await;
                 let _ = shared.stop.send(Stopped::Shutdown);
             }
             // Acknowledged before the flag is set, so a tick cannot stop the agent first. It
-            // stops now if idle, else on a later tick.
+            // stops now if idle (not busy, no request in flight), else on a later tick.
             ClientMsg::Drain { id } => {
                 shared.touch();
-                let (flushed_tx, flushed_rx) = oneshot::channel();
-                let body = serde_json::Value::Null;
-                let _ = tx.send((AgentMsg::Response { id, body }, Some(flushed_tx)));
-                let _ = flushed_rx.await;
+                ack_flushed(&tx, id).await;
                 if !shared.draining.swap(true, Ordering::SeqCst) {
                     shared.handler.draining();
                 }
-                if shared.handler.busy().is_none() {
+                if shared.idle() {
                     let _ = shared.stop.send(Stopped::Drained);
                 }
             }
@@ -371,6 +372,14 @@ async fn connection<H: Handler>(stream: transport::Stream, shared: Arc<Shared<H>
     }
     drop(tx);
     let _ = writer_task.await;
+}
+
+/// Acknowledge `id` and wait until the ack is written (or the write failed).
+async fn ack_flushed(tx: &mpsc::UnboundedSender<Outgoing>, id: u64) {
+    let (flushed_tx, flushed_rx) = oneshot::channel();
+    let body = serde_json::Value::Null;
+    let _ = tx.send((AgentMsg::Response { id, body }, Some(flushed_tx)));
+    let _ = flushed_rx.await;
 }
 
 async fn run_request<H: Handler>(

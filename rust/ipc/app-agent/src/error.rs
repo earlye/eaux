@@ -21,8 +21,9 @@ pub enum Error {
     SpawnTimedOut { log: PathBuf },
     /// The agent refused to stop because the app says it is busy.
     Busy(String),
-    /// The agent was still busy when [`Client::drain`](crate::Client::drain) gave up waiting.
-    /// The drain stays in effect: the agent stops once it is no longer busy.
+    /// The agent had not stopped when [`Client::drain`](crate::Client::drain) gave up waiting.
+    /// The drain stays in effect: the agent stops once it is idle (the handler not busy and no
+    /// request in flight).
     StillDraining { pid: u32 },
     /// The app's handler returned an error.
     Remote(String),

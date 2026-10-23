@@ -98,6 +98,16 @@ impl std::fmt::Debug for Client {
     }
 }
 
+/// Wait for the agent's empty acknowledgement of a built-in `what` message.
+async fn expect_ack(rx: &mut mpsc::UnboundedReceiver<AgentMsg>, what: &str) -> Result<()> {
+    match rx.recv().await {
+        Some(AgentMsg::Response { .. }) => Ok(()),
+        Some(AgentMsg::Error { code, message, .. }) => Err(remote_error(code, message)),
+        Some(_) => Err(Error::Protocol(format!("unexpected reply to {what}"))),
+        None => Err(Error::Disconnected),
+    }
+}
+
 fn remote_error(code: ErrorCode, message: String) -> Error {
     match code {
         ErrorCode::Busy => Error::Busy(message),
@@ -166,12 +176,7 @@ impl Client {
     /// On success, waits (briefly) for the agent to close the connection.
     pub async fn shutdown(&self) -> Result<()> {
         let (_, mut rx) = self.conn.start(|id| ClientMsg::Shutdown { id })?;
-        match rx.recv().await {
-            Some(AgentMsg::Response { .. }) => {}
-            Some(AgentMsg::Error { code, message, .. }) => return Err(remote_error(code, message)),
-            Some(_) => return Err(Error::Protocol("unexpected reply to shutdown".into())),
-            None => return Err(Error::Disconnected),
-        }
+        expect_ack(&mut rx, "shutdown").await?;
         let mut closed = self.closed.clone();
         let _ = tokio::time::timeout(
             self.app.spawn_timeout_value(),
@@ -181,23 +186,26 @@ impl Client {
         Ok(())
     }
 
-    /// Ask the agent to stop once it is no longer busy, and wait up to `timeout` for it to close
-    /// the connection. On timeout returns [`Error::StillDraining`]; the drain stays in effect.
+    /// Ask the agent to stop once it is idle (not busy, no request in flight), and wait up to
+    /// `timeout`, covering both the acknowledgement and the agent closing the connection. On
+    /// timeout returns [`Error::StillDraining`]; the drain stays in effect. The agent keeps
+    /// serving requests while draining unless the handler refuses them.
+    ///
+    /// [`Error::Disconnected`] does not mean the drain was ignored: the agent may have applied it
+    /// and failed only to deliver the acknowledgement.
     pub async fn drain(&self, timeout: Duration) -> Result<()> {
         let (_, mut rx) = self.conn.start(|id| ClientMsg::Drain { id })?;
-        match rx.recv().await {
-            Some(AgentMsg::Response { .. }) => {}
-            Some(AgentMsg::Error { code, message, .. }) => return Err(remote_error(code, message)),
-            Some(_) => return Err(Error::Protocol("unexpected reply to drain".into())),
-            None => return Err(Error::Disconnected),
-        }
         let mut closed = self.closed.clone();
-        tokio::time::timeout(timeout, closed.wait_for(|closed| *closed))
+        let drained = async {
+            expect_ack(&mut rx, "drain").await?;
+            let _ = closed.wait_for(|closed| *closed).await;
+            Ok(())
+        };
+        tokio::time::timeout(timeout, drained)
             .await
-            .map(|_| ())
-            .map_err(|_| Error::StillDraining {
+            .unwrap_or(Err(Error::StillDraining {
                 pid: self.hello.pid,
-            })
+            }))
     }
 
     /// Shut the agent down (unless busy) and connect to a freshly spawned one, e.g. after
