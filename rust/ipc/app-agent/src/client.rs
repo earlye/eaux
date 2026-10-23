@@ -193,8 +193,9 @@ impl Client {
     /// applied. The agent keeps serving requests while draining unless the handler refuses them.
     ///
     /// Fails at once with [`Error::Unsupported`] if the agent predates `drain` (see
-    /// [`Hello::drain`]); use [`Client::shutdown`] for it instead. [`Error::Disconnected`] can
-    /// mean the agent applied the drain but could not deliver the acknowledgement.
+    /// [`Hello::drain`]); use [`Client::shutdown`] for it instead. Fails with [`Error::Busy`] if
+    /// the agent is already restarting into a changed binary. [`Error::Disconnected`] can mean
+    /// the agent applied the drain but could not deliver the acknowledgement.
     pub async fn drain(&self, timeout: Duration) -> Result<()> {
         if !self.hello.drain {
             return Err(Error::Unsupported("drain"));

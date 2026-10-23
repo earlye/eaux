@@ -100,6 +100,8 @@ struct Shared<H> {
     hello: Hello,
     in_flight: AtomicUsize,
     draining: AtomicBool,
+    /// A drain or a binary-change restart, whichever came first; the other is then refused.
+    committed: Mutex<Option<Stopped>>,
     last_activity: Mutex<Instant>,
     stop: mpsc::UnboundedSender<Stopped>,
 }
@@ -113,6 +115,11 @@ impl<H> Shared<H> {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .elapsed()
+    }
+    /// Commit to stopping for `reason`; `false` if already committed to another reason.
+    fn commit(&self, reason: Stopped) -> bool {
+        let mut committed = self.committed.lock().unwrap_or_else(|e| e.into_inner());
+        *committed.get_or_insert(reason) == reason
     }
 }
 
@@ -222,6 +229,7 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
         },
         in_flight: AtomicUsize::new(0),
         draining: AtomicBool::new(false),
+        committed: Mutex::new(None),
         last_activity: Mutex::new(Instant::now()),
         stop: stop_tx,
     });
@@ -262,14 +270,18 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
                 {
                     break Stopped::IdleTimeout;
                 }
-                // A drain suppresses binary-change restarts: the agent stops once idle instead.
                 if let Some((every, original)) = &watch
-                    && !shared.draining.load(Ordering::SeqCst)
                     && last_watch.elapsed() >= *every
                 {
                     last_watch = Instant::now();
                     let now = file_id(&installed);
-                    if now.is_some() && now != *original && shared.handler.busy().is_none() {
+                    // A drain suppresses binary-change restarts: the agent stops once idle
+                    // instead.
+                    if now.is_some()
+                        && now != *original
+                        && shared.handler.busy().is_none()
+                        && shared.commit(Stopped::Restarted)
+                    {
                         break Stopped::Restarted;
                     }
                 }
@@ -333,10 +345,22 @@ async fn connection<H: Handler>(stream: transport::Stream, shared: Arc<Shared<H>
                 send_flushed(&tx, ack(id)).await;
                 let _ = shared.stop.send(Stopped::Shutdown);
             }
-            // Acknowledged before the flag is set, so a tick cannot stop the agent first. It
-            // stops now if idle (not busy, no request in flight), else on a later tick.
+            // Refused once a binary-change restart is committed, which the drain could no longer
+            // stop. Acknowledged before the flag is set, so a tick cannot stop the agent first.
+            // It stops now if idle (not busy, no request in flight), else on a later tick.
             ClientMsg::Drain { id } => {
                 shared.touch();
+                if !shared.commit(Stopped::Drained) {
+                    let _ = tx.send((
+                        AgentMsg::Error {
+                            id,
+                            code: ErrorCode::Busy,
+                            message: "restarting into a new binary".into(),
+                        },
+                        None,
+                    ));
+                    continue;
+                }
                 send_flushed(&tx, ack(id)).await;
                 if !shared.draining.swap(true, Ordering::SeqCst) {
                     shared.handler.draining();

@@ -15,19 +15,21 @@ pub enum Error {
     /// The agent accepted the connection but did not answer `hello` in time, or did not
     /// acknowledge [`Client::drain`](crate::Client::drain) before its timeout (so the drain may
     /// not be in effect).
-    /// The crate never kills it; `pid` comes from the lock file.
+    /// The crate never kills it. `pid` comes from the lock file when connecting, or from
+    /// `hello` for `drain`.
     Hung { pid: Option<u32> },
     /// The spawned agent exited with an unexpected status before it started listening.
     AgentFailed { status: ExitStatus, log: PathBuf },
     /// The agent never became reachable within the spawn timeout.
     SpawnTimedOut { log: PathBuf },
-    /// The agent refused to stop because the app says it is busy.
+    /// The agent refused to stop because the app says it is busy, or refused a drain because
+    /// it is already restarting into a new binary.
     Busy(String),
     /// The agent had not stopped when [`Client::drain`](crate::Client::drain) gave up waiting.
     /// The drain stays in effect: the agent stops once it is idle (the handler not busy and no
     /// request in flight).
     StillDraining { pid: u32 },
-    /// The agent does not understand this request (it predates it); the string names it.
+    /// The agent is too old to understand the named request.
     Unsupported(&'static str),
     /// The app's handler returned an error.
     Remote(String),

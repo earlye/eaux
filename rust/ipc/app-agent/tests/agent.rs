@@ -499,6 +499,27 @@ fn drain_timeout_stays_in_effect() {
     });
 }
 
+/// The drain belongs to the agent, not to the connection that asked for it.
+fn drain_outlives_client() {
+    let fx = Fixture::new("drain-outlives", false);
+    let app = fx.app("1.0.0");
+    block_on(async {
+        let worker = app.connect_or_spawn().await.unwrap();
+        set_busy(&worker, true).await;
+        let client = app.connect().await.unwrap();
+        let err = client.drain(Duration::from_millis(300)).await.unwrap_err();
+        assert!(matches!(err, Error::StillDraining { .. }), "{err:?}");
+        drop(client);
+        // Give the agent time to notice the disconnect; it still serves while busy.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(echo(&worker, "still here").await, "still here");
+
+        set_busy(&worker, false).await;
+        wait_until_gone(&app, Duration::from_secs(5)).await;
+        wait_for_log(&fx, "stopping: Drained", Duration::from_secs(2)).await;
+    });
+}
+
 fn idle_exit() {
     let mut fx = Fixture::new("idle", false);
     fx.idle_ms = "300".into();
@@ -599,7 +620,7 @@ fn drain_beats_binary_restart_while(test: &str, in_flight: bool) {
         let client = app.connect_or_spawn().await.unwrap();
         let mut sub = None;
         if in_flight {
-            // Outlasts the watch interval, the binary change and the drain timeout below.
+            // Outlasts the waits, the drain timeout and the binary change below.
             let mut events = client
                 .subscribe::<_, u32>(&Req::Count {
                     n: 25,
@@ -614,9 +635,13 @@ fn drain_beats_binary_restart_while(test: &str, in_flight: bool) {
         }
         // See binary_watch_restarts for why the wait.
         tokio::time::sleep(Duration::from_millis(1100)).await;
-        reinstall(&installed);
+        // Drain first: with a request in flight but the handler not busy, a binary change seen
+        // before the drain is in effect would restart the agent.
         let err = client.drain(Duration::from_millis(300)).await.unwrap_err();
         assert!(matches!(err, Error::StillDraining { .. }), "{err:?}");
+        reinstall(&installed);
+        // Past a watch tick, so a restart would have happened by now.
+        tokio::time::sleep(Duration::from_millis(300)).await;
 
         if let Some(sub) = sub {
             let rest: Vec<u32> = sub.map(Result::unwrap).collect().await;
@@ -788,6 +813,7 @@ fn tests() -> Vec<Test> {
             "drain_timeout_stays_in_effect",
             drain_timeout_stays_in_effect,
         ),
+        ("drain_outlives_client", drain_outlives_client),
         ("drain_beats_binary_restart", drain_beats_binary_restart),
         (
             "drain_beats_binary_restart_in_flight",

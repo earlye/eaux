@@ -171,13 +171,14 @@ file. It never kills the agent.
   idle, which may be immediately. The crate keeps dispatching requests while
   draining; refusing new work is the handler's job, typically from
   `draining()` on. A drain wins over a pending binary-watch restart: the agent
-  stops and starts nothing. A request stays in flight until its last reply is
-  written, so a drain never cuts that reply off. `Client::drain(timeout)`
-  waits, for the acknowledgement and then for the agent to close the
-  connection, up to `timeout` in all. If it runs out after the
-  acknowledgement it returns `Error::StillDraining`, and the agent still stops
-  once it is idle; if it runs out before, it returns `Error::Hung`, and the
-  drain may not have been applied. Against an agent that predates `drain` it
+  stops and starts nothing. A drain that arrives once that restart is under
+  way is refused with `Error::Busy`. A request stays in flight until its last
+  reply is written, so a drain never cuts that reply off.
+  `Client::drain(timeout)` waits up to `timeout` in total for the
+  acknowledgement and then for the agent to close the connection. Timing out
+  before the acknowledgement returns `Error::Hung`, and the drain may not be
+  in effect. Timing out after it returns `Error::StillDraining`, and the agent
+  still stops once idle. Against an agent that predates `drain` it
   fails at once with `Error::Unsupported`; use `shutdown` there.
 
 **Idle exit.** With `idle_timeout(Some(d))`, the agent exits once no request
