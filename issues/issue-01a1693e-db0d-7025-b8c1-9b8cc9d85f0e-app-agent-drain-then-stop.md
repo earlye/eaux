@@ -24,8 +24,8 @@ shut down without telling it to drain.
 
 ## Out of scope
 
-- Killing the agent. app-agent never kills (`Error::Hung` docs). firkin's `--force` will kill
-  by the pid from `hello` itself.
+- Killing the agent. Tracked separately in
+  `issues/issue-01a169bd-15ef-7228-b374-b25abe625813-app-agent-force-kill.md`.
 
 ## Open questions
 
