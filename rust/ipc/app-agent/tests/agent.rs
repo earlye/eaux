@@ -495,6 +495,7 @@ fn drain_timeout_stays_in_effect() {
 
         set_busy(&worker, false).await;
         wait_until_gone(&app, Duration::from_secs(5)).await;
+        wait_for_log(&fx, "stopping: Drained", Duration::from_secs(2)).await;
     });
 }
 
@@ -580,21 +581,49 @@ fn shadow_copy() {
 
 /// A drain wins over a pending binary-change restart: the agent stops and nothing replaces it.
 fn drain_beats_binary_restart() {
-    let mut fx = Fixture::new("drain-watch", false);
+    drain_beats_binary_restart_while("drain-watch", false);
+}
+
+/// As [`drain_beats_binary_restart`], with a request in flight instead of the handler busy.
+fn drain_beats_binary_restart_in_flight() {
+    drain_beats_binary_restart_while("drain-watch-flight", true);
+}
+
+fn drain_beats_binary_restart_while(test: &str, in_flight: bool) {
+    let mut fx = Fixture::new(test, false);
     let installed = install_copy(&fx, "install");
     fx.program = Some(installed.clone());
     fx.watch = "100".into();
     let app = fx.app("1.0.0");
     block_on(async {
         let client = app.connect_or_spawn().await.unwrap();
-        set_busy(&client, true).await;
+        let mut sub = None;
+        if in_flight {
+            // Outlasts the watch interval, the binary change and the drain timeout below.
+            let mut events = client
+                .subscribe::<_, u32>(&Req::Count {
+                    n: 25,
+                    delay_ms: 100,
+                })
+                .await
+                .unwrap();
+            assert_eq!(events.next().await.unwrap().unwrap(), 0);
+            sub = Some(events);
+        } else {
+            set_busy(&client, true).await;
+        }
         // See binary_watch_restarts for why the wait.
         tokio::time::sleep(Duration::from_millis(1100)).await;
         reinstall(&installed);
         let err = client.drain(Duration::from_millis(300)).await.unwrap_err();
         assert!(matches!(err, Error::StillDraining { .. }), "{err:?}");
 
-        set_busy(&client, false).await;
+        if let Some(sub) = sub {
+            let rest: Vec<u32> = sub.map(Result::unwrap).collect().await;
+            assert_eq!(rest, (1..25).collect::<Vec<_>>());
+        } else {
+            set_busy(&client, false).await;
+        }
         wait_until_gone(&app, Duration::from_secs(5)).await;
         wait_for_log(&fx, "stopping: Drained", Duration::from_secs(2)).await;
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -702,6 +731,41 @@ fn hung_agent_reported() {
     });
 }
 
+/// A drain the agent does not acknowledge in time reports `Hung`, not `StillDraining`; once the
+/// agent runs again it still reads the drain and stops.
+#[cfg(unix)]
+fn drain_ack_timeout() {
+    let fx = Fixture::new("drain-ack", false);
+    let app = fx.app("1.0.0");
+    block_on(async {
+        let client = app.connect_or_spawn().await.unwrap();
+        let pid = client.hello().pid;
+        let signal = |sig: &str| {
+            assert!(
+                Command::new("kill")
+                    .args([sig, &pid.to_string()])
+                    .status()
+                    .unwrap()
+                    .success()
+            )
+        };
+        signal("-STOP");
+        let drained = tokio::time::timeout(
+            Duration::from_secs(3),
+            client.drain(Duration::from_millis(300)),
+        )
+        .await;
+        signal("-CONT");
+        let err = drained.expect("drain ignored its timeout").unwrap_err();
+        assert!(
+            matches!(err, Error::Hung { pid: Some(p) } if p == pid),
+            "{err:?}"
+        );
+        wait_until_gone(&app, Duration::from_secs(5)).await;
+        wait_for_log(&fx, "stopping: Drained", Duration::from_secs(2)).await;
+    });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Harness
 
@@ -725,6 +789,10 @@ fn tests() -> Vec<Test> {
             drain_timeout_stays_in_effect,
         ),
         ("drain_beats_binary_restart", drain_beats_binary_restart),
+        (
+            "drain_beats_binary_restart_in_flight",
+            drain_beats_binary_restart_in_flight,
+        ),
         ("idle_exit", idle_exit),
         ("version_mismatch_reported", version_mismatch_reported),
         ("shadow_copy", shadow_copy),
@@ -735,6 +803,7 @@ fn tests() -> Vec<Test> {
     let tests = {
         let mut tests = tests;
         tests.push(("hung_agent_reported", hung_agent_reported));
+        tests.push(("drain_ack_timeout", drain_ack_timeout));
         tests
     };
     tests

@@ -187,25 +187,35 @@ impl Client {
     }
 
     /// Ask the agent to stop once it is idle (not busy, no request in flight), and wait up to
-    /// `timeout`, covering both the acknowledgement and the agent closing the connection. On
-    /// timeout returns [`Error::StillDraining`]; the drain stays in effect. The agent keeps
-    /// serving requests while draining unless the handler refuses them.
+    /// `timeout`, covering both the acknowledgement and the agent closing the connection. If the
+    /// time runs out after the acknowledgement, returns [`Error::StillDraining`]: the drain stays
+    /// in effect. If it runs out before, returns [`Error::Hung`]: the drain may not have been
+    /// applied. The agent keeps serving requests while draining unless the handler refuses them.
     ///
-    /// [`Error::Disconnected`] does not mean the drain was ignored: the agent may have applied it
-    /// and failed only to deliver the acknowledgement.
+    /// Fails at once with [`Error::Unsupported`] if the agent predates `drain` (see
+    /// [`Hello::drain`]); use [`Client::shutdown`] for it instead. [`Error::Disconnected`] can
+    /// mean the agent applied the drain but could not deliver the acknowledgement.
     pub async fn drain(&self, timeout: Duration) -> Result<()> {
+        if !self.hello.drain {
+            return Err(Error::Unsupported("drain"));
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
         let (_, mut rx) = self.conn.start(|id| ClientMsg::Drain { id })?;
+        match tokio::time::timeout_at(deadline, expect_ack(&mut rx, "drain")).await {
+            Ok(acked) => acked?,
+            Err(_) => {
+                return Err(Error::Hung {
+                    pid: Some(self.hello.pid),
+                });
+            }
+        }
         let mut closed = self.closed.clone();
-        let drained = async {
-            expect_ack(&mut rx, "drain").await?;
-            let _ = closed.wait_for(|closed| *closed).await;
-            Ok(())
-        };
-        tokio::time::timeout(timeout, drained)
-            .await
-            .unwrap_or(Err(Error::StillDraining {
+        match tokio::time::timeout_at(deadline, closed.wait_for(|closed| *closed)).await {
+            Ok(_) => Ok(()),
+            Err(_) => Err(Error::StillDraining {
                 pid: self.hello.pid,
-            }))
+            }),
+        }
     }
 
     /// Shut the agent down (unless busy) and connect to a freshly spawned one, e.g. after

@@ -12,7 +12,9 @@ pub enum Error {
     AlreadyRunning { pid: Option<u32> },
     /// No agent is listening on the endpoint (returned by [`App::connect`](crate::App::connect)).
     NotRunning,
-    /// The agent accepted the connection but did not answer `hello` in time.
+    /// The agent accepted the connection but did not answer `hello` in time, or did not
+    /// acknowledge [`Client::drain`](crate::Client::drain) before its timeout (so the drain may
+    /// not be in effect).
     /// The crate never kills it; `pid` comes from the lock file.
     Hung { pid: Option<u32> },
     /// The spawned agent exited with an unexpected status before it started listening.
@@ -25,6 +27,8 @@ pub enum Error {
     /// The drain stays in effect: the agent stops once it is idle (the handler not busy and no
     /// request in flight).
     StillDraining { pid: u32 },
+    /// The agent does not understand this request (it predates it); the string names it.
+    Unsupported(&'static str),
     /// The app's handler returned an error.
     Remote(String),
     /// Windows only: the named pipe is served by a process owned by another user.
@@ -63,6 +67,7 @@ impl fmt::Display for Error {
                 f,
                 "agent (pid {pid}) is still draining; it will stop once idle"
             ),
+            Error::Unsupported(what) => write!(f, "agent does not support {what}"),
             Error::Remote(message) => write!(f, "agent error: {message}"),
             Error::NotOwner { pid } => write!(
                 f,

@@ -218,6 +218,7 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
             pid: std::process::id(),
             started_at: SystemTime::now(),
             app_version: app.version().to_string(),
+            drain: true,
         },
         in_flight: AtomicUsize::new(0),
         draining: AtomicBool::new(false),
@@ -252,7 +253,6 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
             },
             Some(reason) = stop_rx.recv() => break reason,
             _ = ticker.tick() => {
-                // Checked first, so a drain stops rather than restarts on a binary change.
                 if shared.draining.load(Ordering::SeqCst) && shared.idle() {
                     break Stopped::Drained;
                 }
@@ -262,7 +262,9 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
                 {
                     break Stopped::IdleTimeout;
                 }
+                // A drain suppresses binary-change restarts: the agent stops once idle instead.
                 if let Some((every, original)) = &watch
+                    && !shared.draining.load(Ordering::SeqCst)
                     && last_watch.elapsed() >= *every
                 {
                     last_watch = Instant::now();
@@ -328,14 +330,14 @@ async fn connection<H: Handler>(stream: transport::Stream, shared: Arc<Shared<H>
                     ));
                     continue;
                 }
-                ack_flushed(&tx, id).await;
+                send_flushed(&tx, ack(id)).await;
                 let _ = shared.stop.send(Stopped::Shutdown);
             }
             // Acknowledged before the flag is set, so a tick cannot stop the agent first. It
             // stops now if idle (not busy, no request in flight), else on a later tick.
             ClientMsg::Drain { id } => {
                 shared.touch();
-                ack_flushed(&tx, id).await;
+                send_flushed(&tx, ack(id)).await;
                 if !shared.draining.swap(true, Ordering::SeqCst) {
                     shared.handler.draining();
                 }
@@ -356,7 +358,11 @@ async fn connection<H: Handler>(stream: transport::Stream, shared: Arc<Shared<H>
                 let mut registry = tasks.lock().unwrap_or_else(|e| e.into_inner());
                 let handle = tokio::spawn(async move {
                     let _guard = guard;
-                    run_request(&shared.handler, id, body, &tx).await;
+                    // The request stays in flight until its last reply is written, so a drain or
+                    // idle exit cannot cut that reply off.
+                    if let Some(last) = run_request(&shared.handler, id, body, &tx).await {
+                        send_flushed(&tx, last).await;
+                    }
                     tasks_for_task
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
@@ -374,39 +380,38 @@ async fn connection<H: Handler>(stream: transport::Stream, shared: Arc<Shared<H>
     let _ = writer_task.await;
 }
 
-/// Acknowledge `id` and wait until the ack is written (or the write failed).
-async fn ack_flushed(tx: &mpsc::UnboundedSender<Outgoing>, id: u64) {
-    let (flushed_tx, flushed_rx) = oneshot::channel();
+/// The empty acknowledgement of a built-in message.
+fn ack(id: u64) -> AgentMsg {
     let body = serde_json::Value::Null;
-    let _ = tx.send((AgentMsg::Response { id, body }, Some(flushed_tx)));
+    AgentMsg::Response { id, body }
+}
+
+/// Send `msg` and wait until it is written (or the write failed).
+async fn send_flushed(tx: &mpsc::UnboundedSender<Outgoing>, msg: AgentMsg) {
+    let (flushed_tx, flushed_rx) = oneshot::channel();
+    let _ = tx.send((msg, Some(flushed_tx)));
     let _ = flushed_rx.await;
 }
 
+/// Answer one request, sending every event; returns the final reply for the caller to send, or
+/// `None` if the connection is gone.
 async fn run_request<H: Handler>(
     handler: &H,
     id: u64,
     body: serde_json::Value,
     tx: &mpsc::UnboundedSender<Outgoing>,
-) {
-    let send = |msg: AgentMsg| tx.send((msg, None)).is_ok();
+) -> Option<AgentMsg> {
     let error = |code, message: String| AgentMsg::Error { id, code, message };
     let request = match serde_json::from_value::<H::Request>(body) {
         Ok(request) => request,
-        Err(e) => {
-            send(error(ErrorCode::BadRequest, e.to_string()));
-            return;
-        }
+        Err(e) => return Some(error(ErrorCode::BadRequest, e.to_string())),
     };
     match handler.handle(request).await {
-        Err(message) => {
-            send(error(ErrorCode::Handler, message));
-        }
-        Ok(Reply::Response(response)) => {
-            send(match serde_json::to_value(response) {
-                Ok(body) => AgentMsg::Response { id, body },
-                Err(e) => error(ErrorCode::Handler, e.to_string()),
-            });
-        }
+        Err(message) => Some(error(ErrorCode::Handler, message)),
+        Ok(Reply::Response(response)) => Some(match serde_json::to_value(response) {
+            Ok(body) => AgentMsg::Response { id, body },
+            Err(e) => error(ErrorCode::Handler, e.to_string()),
+        }),
         Ok(Reply::Events(mut events)) => loop {
             let item = std::future::poll_fn(|cx| events.as_mut().poll_next(cx)).await;
             let msg = match item {
@@ -417,9 +422,11 @@ async fn run_request<H: Handler>(
                     Err(e) => error(ErrorCode::Handler, e.to_string()),
                 },
             };
-            let last = !matches!(msg, AgentMsg::Event { .. });
-            if !send(msg) || last {
-                break;
+            if !matches!(msg, AgentMsg::Event { .. }) {
+                break Some(msg);
+            }
+            if tx.send((msg, None)).is_err() {
+                break None;
             }
         },
     }
