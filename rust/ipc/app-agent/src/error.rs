@@ -21,6 +21,9 @@ pub enum Error {
     SpawnTimedOut { log: PathBuf },
     /// The agent refused to stop because the app says it is busy.
     Busy(String),
+    /// The agent was still busy when [`Client::drain`](crate::Client::drain) gave up waiting.
+    /// The drain stays in effect: the agent stops once it is no longer busy.
+    StillDraining { pid: u32 },
     /// The app's handler returned an error.
     Remote(String),
     /// Windows only: the named pipe is served by a process owned by another user.
@@ -55,6 +58,10 @@ impl fmt::Display for Error {
                 write!(f, "agent did not start in time; see {}", log.display())
             }
             Error::Busy(reason) => write!(f, "agent is busy: {reason}"),
+            Error::StillDraining { pid } => write!(
+                f,
+                "agent (pid {pid}) is still draining; it will stop once idle"
+            ),
             Error::Remote(message) => write!(f, "agent error: {message}"),
             Error::NotOwner { pid } => write!(
                 f,

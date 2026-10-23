@@ -181,6 +181,25 @@ impl Client {
         Ok(())
     }
 
+    /// Ask the agent to stop once it is no longer busy, and wait up to `timeout` for it to close
+    /// the connection. On timeout returns [`Error::StillDraining`]; the drain stays in effect.
+    pub async fn drain(&self, timeout: Duration) -> Result<()> {
+        let (_, mut rx) = self.conn.start(|id| ClientMsg::Drain { id })?;
+        match rx.recv().await {
+            Some(AgentMsg::Response { .. }) => {}
+            Some(AgentMsg::Error { code, message, .. }) => return Err(remote_error(code, message)),
+            Some(_) => return Err(Error::Protocol("unexpected reply to drain".into())),
+            None => return Err(Error::Disconnected),
+        }
+        let mut closed = self.closed.clone();
+        tokio::time::timeout(timeout, closed.wait_for(|closed| *closed))
+            .await
+            .map(|_| ())
+            .map_err(|_| Error::StillDraining {
+                pid: self.hello.pid,
+            })
+    }
+
     /// Shut the agent down (unless busy) and connect to a freshly spawned one, e.g. after
     /// [`Client::mismatch`] reports a version change.
     pub async fn restart(self) -> Result<Client> {

@@ -18,6 +18,10 @@ pub(crate) enum ClientMsg {
     Shutdown {
         id: u64,
     },
+    /// Stop once the handler is no longer busy.
+    Drain {
+        id: u64,
+    },
     Request {
         id: u64,
         body: Value,

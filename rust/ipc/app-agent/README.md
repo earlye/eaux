@@ -15,7 +15,7 @@ bump in the meantime as breaking.
 
 ```toml
 [dependencies]
-app-agent = "=0.0.1-alpha.2"
+app-agent = "=0.0.1-alpha.3"
 ```
 
 ## Usage
@@ -51,7 +51,11 @@ impl Handler for Agent {
     }
 
     fn busy(&self) -> Option<String> {
-        None // Some("2 jobs running") refuses shutdown and postpones idle exit and restarts
+        None // Some("2 jobs running") refuses shutdown; postpones idle exit, restarts, drain
+    }
+
+    fn draining(&self) {
+        // A client asked the agent to drain: refuse new jobs from here on.
     }
 }
 
@@ -86,7 +90,8 @@ producing them.
 | `Client::call` / `Client::subscribe` | One response, or a `Subscription` stream of events. |
 | `Client::hello` / `Client::mismatch` | What the agent reported, and whether its version or protocol differs. |
 | `Client::shutdown` / `Client::restart` | Graceful stop (refused with `Error::Busy` while busy), and stop-then-respawn. |
-| `Handler` | The app's one trait: `handle` returns `Reply::Response` or `Reply::Events`; `busy` says "won't stop". |
+| `Client::drain` | Stop once no longer busy, waiting up to a timeout (`Error::StillDraining` if it runs out; the drain stays in effect). |
+| `Handler` | The app's one trait: `handle` returns `Reply::Response` or `Reply::Events`; `busy` says "won't stop"; `draining` says a drain began. |
 | `Error`, `Stopped`, `Hello`, `Mismatch`, `EXIT_ALREADY_RUNNING`, `PROTOCOL_VERSION`, `endpoint_env_var` | Supporting types and constants. |
 
 The transport is private. The wire format is JSON lines over
@@ -157,6 +162,13 @@ file. It never kills the agent.
 - `shutdown` stops the agent gracefully. While the handler's `busy()` returns
   `Some`, the agent refuses with `Error::Busy`, so an app can restart on
   mismatch but not while it has jobs running.
+- `drain` asks the agent to stop once `busy()` returns `None`. The agent
+  acknowledges at once, calls the handler's `draining()` (once) so the app can
+  refuse new work, and stops as soon as it is not busy, which is immediately
+  if it is idle. A drain wins over a pending binary-watch restart: the agent
+  stops and starts nothing. `Client::drain(timeout)` waits for the agent to
+  close the connection; if the timeout expires it returns
+  `Error::StillDraining`, and the agent still stops once it is idle.
 
 **Idle exit.** With `idle_timeout(Some(d))`, the agent exits once no request
 has been in flight for `d` and the handler is not busy. `hello` does not count
@@ -185,7 +197,7 @@ number is not masked by an old copy. Each start
 from the shadow directory deletes the other, stale copies there.
 
 **Envelope.** Each line is one JSON object. The client sends
-`{"kind":"hello"|"shutdown"|"request"|"cancel","id":N,...}`, with the app's
+`{"kind":"hello"|"shutdown"|"drain"|"request"|"cancel","id":N,...}`, with the app's
 request under `body`. The agent answers with `kind` set to `response`,
 `event`, `end` or `error`, carrying the same `id`. App types are any serde
 types. Requests on one connection run concurrently.
@@ -223,9 +235,10 @@ The integration tests (`tests/agent.rs`) start real detached agents. The test
 binary is its own dummy agent: given `--dummy-agent` it serves instead of
 running tests. The tests cover cold start, concurrent clients ending with
 one agent, recovery from `kill -9` with a stale endpoint, `shutdown` with busy
-refusal, idle exit, version mismatch with restart, the Windows shadow copy,
-binary-watch restart, a piped CLI whose `output()` returns after it cold-starts
-the agent, and (Unix) hung-agent reporting. CI runs them on Linux,
+refusal, `drain` (idle, waiting out busy, timing out, and winning over a
+binary-watch restart), idle exit, version mismatch with restart, the Windows
+shadow copy, binary-watch restart, a piped CLI whose `output()` returns after
+it cold-starts the agent, and (Unix) hung-agent reporting. CI runs them on Linux,
 macOS and Windows.
 
 ## License

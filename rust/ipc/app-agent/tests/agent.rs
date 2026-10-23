@@ -25,12 +25,14 @@ enum Req {
     Echo { text: String },
     Count { n: u32, delay_ms: u64 },
     SetBusy { busy: bool },
+    IsDraining,
     Exe,
     Fail,
 }
 
 struct Dummy {
     busy: AtomicBool,
+    draining: AtomicBool,
 }
 
 impl Handler for Dummy {
@@ -54,6 +56,7 @@ impl Handler for Dummy {
                 self.busy.store(busy, Ordering::SeqCst);
                 Reply::Response(Value::Null)
             }
+            Req::IsDraining => Reply::Response(json!(self.draining.load(Ordering::SeqCst))),
             Req::Exe => Reply::Response(json!(std::env::current_exe().unwrap())),
             Req::Fail => return Err("boom".into()),
         })
@@ -63,6 +66,10 @@ impl Handler for Dummy {
         self.busy
             .load(Ordering::SeqCst)
             .then(|| "dummy job running".to_string())
+    }
+
+    fn draining(&self) {
+        self.draining.store(true, Ordering::SeqCst);
     }
 }
 
@@ -82,6 +89,7 @@ fn dummy_main(args: &[String]) -> ExitCode {
         .unwrap()
         .block_on(app.run(Dummy {
             busy: AtomicBool::new(false),
+            draining: AtomicBool::new(false),
         }))
 }
 
@@ -384,6 +392,60 @@ fn shutdown() {
     });
 }
 
+fn drain_when_idle() {
+    let fx = Fixture::new("drain-idle", false);
+    let app = fx.app("1.0.0");
+    block_on(async {
+        let client = app.connect_or_spawn().await.unwrap();
+        client.drain(Duration::from_secs(5)).await.unwrap();
+        wait_until_gone(&app, Duration::from_secs(5)).await;
+        assert!(fx.log().contains("stopping: Drained"), "log:\n{}", fx.log());
+    });
+}
+
+fn drain_waits_for_busy() {
+    let fx = Fixture::new("drain-busy", false);
+    let app = fx.app("1.0.0");
+    block_on(async {
+        let worker = app.connect_or_spawn().await.unwrap();
+        set_busy(&worker, true).await;
+        let started = Instant::now();
+        let finish = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let draining: bool = worker.call(&Req::IsDraining).await.unwrap();
+            set_busy(&worker, false).await;
+            draining
+        });
+        let client = app.connect().await.unwrap();
+        client.drain(Duration::from_secs(10)).await.unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(500));
+        assert!(finish.await.unwrap(), "handler did not see the drain");
+        wait_until_gone(&app, Duration::from_secs(5)).await;
+    });
+}
+
+fn drain_timeout_stays_in_effect() {
+    let fx = Fixture::new("drain-timeout", false);
+    let app = fx.app("1.0.0");
+    block_on(async {
+        let worker = app.connect_or_spawn().await.unwrap();
+        set_busy(&worker, true).await;
+        let client = app.connect().await.unwrap();
+        let err = client.drain(Duration::from_millis(300)).await.unwrap_err();
+        assert!(
+            matches!(err, Error::StillDraining { pid } if pid == worker.hello().pid),
+            "{err:?}"
+        );
+        // Still serving, still draining, and plain shutdown is still refused while busy.
+        let draining: bool = worker.call(&Req::IsDraining).await.unwrap();
+        assert!(draining);
+        assert!(matches!(client.shutdown().await, Err(Error::Busy(_))));
+
+        set_busy(&worker, false).await;
+        wait_until_gone(&app, Duration::from_secs(5)).await;
+    });
+}
+
 fn idle_exit() {
     let mut fx = Fixture::new("idle", false);
     fx.idle_ms = "300".into();
@@ -459,6 +521,32 @@ fn shadow_copy() {
         // The installed exe is not locked by the running agent, so it can be replaced.
         reinstall(&installed);
         assert_eq!(echo(&client, "alive").await, "alive");
+    });
+    drop(fx);
+    let _ = std::fs::remove_dir_all(installed.parent().unwrap());
+}
+
+/// A drain wins over a pending binary-change restart: the agent stops and nothing replaces it.
+fn drain_beats_binary_restart() {
+    let mut fx = Fixture::new("drain-watch", false);
+    let installed = install_copy(&fx, "install");
+    fx.program = Some(installed.clone());
+    fx.watch = "100".into();
+    let app = fx.app("1.0.0");
+    block_on(async {
+        let client = app.connect_or_spawn().await.unwrap();
+        set_busy(&client, true).await;
+        // See binary_watch_restarts for why the wait.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        reinstall(&installed);
+        let err = client.drain(Duration::from_millis(300)).await.unwrap_err();
+        assert!(matches!(err, Error::StillDraining { .. }), "{err:?}");
+
+        set_busy(&client, false).await;
+        wait_until_gone(&app, Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(matches!(app.connect().await, Err(Error::NotRunning)));
+        assert!(fx.log().contains("stopping: Drained"), "log:\n{}", fx.log());
     });
     drop(fx);
     let _ = std::fs::remove_dir_all(installed.parent().unwrap());
@@ -577,6 +665,13 @@ fn tests() -> Vec<Test> {
         ),
         ("stale_endpoint_after_kill", stale_endpoint_after_kill),
         ("shutdown", shutdown),
+        ("drain_when_idle", drain_when_idle),
+        ("drain_waits_for_busy", drain_waits_for_busy),
+        (
+            "drain_timeout_stays_in_effect",
+            drain_timeout_stays_in_effect,
+        ),
+        ("drain_beats_binary_restart", drain_beats_binary_restart),
         ("idle_exit", idle_exit),
         ("version_mismatch_reported", version_mismatch_reported),
         ("shadow_copy", shadow_copy),

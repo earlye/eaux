@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -46,7 +46,7 @@ impl<R, E> Reply<R, E> {
 
 /// The app's side of the agent: one handler for every app-defined request.
 ///
-/// `hello` and `shutdown` are built in and never reach the handler.
+/// `hello`, `shutdown` and `drain` are built in and never reach the handler.
 pub trait Handler: Send + Sync + 'static {
     /// The app's request type, as sent by `call` and `subscribe`.
     type Request: DeserializeOwned + Send + 'static;
@@ -63,10 +63,14 @@ pub trait Handler: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Reply<Self::Response, Self::Event>, String>> + Send;
 
     /// `Some(reason)` while the agent must not stop: `shutdown` is refused with
-    /// [`Error::Busy`], idle exit waits, and a binary-watch restart waits.
+    /// [`Error::Busy`], and idle exit, a binary-watch restart and a drain wait.
     fn busy(&self) -> Option<String> {
         None
     }
+
+    /// Called once, when a client first asks the agent to drain. The agent stops as soon as
+    /// [`busy`](Handler::busy) returns `None`, so the app should refuse new work from here on.
+    fn draining(&self) {}
 }
 
 /// Why [`App::serve`] returned.
@@ -75,6 +79,8 @@ pub trait Handler: Send + Sync + 'static {
 pub enum Stopped {
     /// A client sent `shutdown`.
     Shutdown,
+    /// A client sent `drain` and the handler was no longer busy.
+    Drained,
     /// Nothing happened for the idle timeout.
     IdleTimeout,
     /// The watched binary changed; a new agent was started from it.
@@ -91,6 +97,7 @@ struct Shared<H> {
     handler: H,
     hello: Hello,
     in_flight: AtomicUsize,
+    draining: AtomicBool,
     last_activity: Mutex<Instant>,
     stop: mpsc::UnboundedSender<Stopped>,
 }
@@ -204,6 +211,7 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
             app_version: app.version().to_string(),
         },
         in_flight: AtomicUsize::new(0),
+        draining: AtomicBool::new(false),
         last_activity: Mutex::new(Instant::now()),
         stop: stop_tx,
     });
@@ -235,6 +243,10 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
             },
             Some(reason) = stop_rx.recv() => break reason,
             _ = ticker.tick() => {
+                // Checked first, so a drain stops rather than restarts on a binary change.
+                if shared.draining.load(Ordering::SeqCst) && shared.handler.busy().is_none() {
+                    break Stopped::Drained;
+                }
                 let idle = shared.in_flight.load(Ordering::SeqCst) == 0;
                 if let Some(timeout) = idle_timeout
                     && idle
@@ -314,6 +326,21 @@ async fn connection<H: Handler>(stream: transport::Stream, shared: Arc<Shared<H>
                 let _ = tx.send((AgentMsg::Response { id, body }, Some(flushed_tx)));
                 let _ = flushed_rx.await;
                 let _ = shared.stop.send(Stopped::Shutdown);
+            }
+            // Acknowledged before the flag is set, so a tick cannot stop the agent first. It
+            // stops now if idle, else on a later tick.
+            ClientMsg::Drain { id } => {
+                shared.touch();
+                let (flushed_tx, flushed_rx) = oneshot::channel();
+                let body = serde_json::Value::Null;
+                let _ = tx.send((AgentMsg::Response { id, body }, Some(flushed_tx)));
+                let _ = flushed_rx.await;
+                if !shared.draining.swap(true, Ordering::SeqCst) {
+                    shared.handler.draining();
+                }
+                if shared.handler.busy().is_none() {
+                    let _ = shared.stop.send(Stopped::Drained);
+                }
             }
             ClientMsg::Cancel { id } => {
                 if let Some(task) = tasks.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
