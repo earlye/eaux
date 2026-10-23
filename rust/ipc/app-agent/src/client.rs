@@ -189,8 +189,10 @@ impl Client {
     /// Ask the agent to stop once it is idle (not busy, no request in flight), and wait up to
     /// `timeout`, covering both the acknowledgement and the agent closing the connection. If the
     /// time runs out after the acknowledgement, returns [`Error::StillDraining`]: the drain stays
-    /// in effect. If it runs out before, returns [`Error::Hung`]: the drain may not have been
-    /// applied. The agent keeps serving requests while draining unless the handler refuses them.
+    /// in effect. If it runs out before, returns [`Error::Hung`]: the drain was sent but not
+    /// acknowledged, so whether the agent received it is unknown; if it did, the drain is in
+    /// effect once the agent resumes. The agent keeps serving requests while draining unless the
+    /// handler refuses them.
     ///
     /// Fails at once with [`Error::Unsupported`] if the agent predates `drain` (see
     /// [`Hello::drain`]); use [`Client::shutdown`] for it instead. Fails with [`Error::Busy`] if

@@ -600,12 +600,16 @@ fn shadow_copy() {
     let _ = std::fs::remove_dir_all(installed.parent().unwrap());
 }
 
-/// A drain wins over a pending binary-change restart: the agent stops and nothing replaces it.
+/// A drain wins over a pending binary-change restart: the binary changes while the handler is
+/// busy (which holds the restart back), then a drain arrives; the agent stops and nothing
+/// replaces it.
 fn drain_beats_binary_restart() {
     drain_beats_binary_restart_while("drain-watch", false);
 }
 
-/// As [`drain_beats_binary_restart`], with a request in flight instead of the handler busy.
+/// With a request in flight instead of the handler busy, nothing holds a restart back, so the
+/// drain comes first: a binary change after it does not restart the agent, which stops once the
+/// request finishes.
 fn drain_beats_binary_restart_in_flight() {
     drain_beats_binary_restart_while("drain-watch-flight", true);
 }
@@ -635,11 +639,18 @@ fn drain_beats_binary_restart_while(test: &str, in_flight: bool) {
         }
         // See binary_watch_restarts for why the wait.
         tokio::time::sleep(Duration::from_millis(1100)).await;
-        // Drain first: with a request in flight but the handler not busy, a binary change seen
-        // before the drain is in effect would restart the agent.
-        let err = client.drain(Duration::from_millis(300)).await.unwrap_err();
-        assert!(matches!(err, Error::StillDraining { .. }), "{err:?}");
-        reinstall(&installed);
+        if in_flight {
+            // Drain first: with the handler not busy, a binary change seen before the drain is
+            // in effect would restart the agent.
+            drain_still_draining(&client).await;
+            reinstall(&installed);
+        } else {
+            // Busy holds the restart back, so the binary change is pending when the drain
+            // arrives. Past a watch tick, so the agent has seen it.
+            reinstall(&installed);
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            drain_still_draining(&client).await;
+        }
         // Past a watch tick, so a restart would have happened by now.
         tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -656,6 +667,11 @@ fn drain_beats_binary_restart_while(test: &str, in_flight: bool) {
     });
     drop(fx);
     let _ = std::fs::remove_dir_all(installed.parent().unwrap());
+}
+
+async fn drain_still_draining(client: &Client) {
+    let err = client.drain(Duration::from_millis(300)).await.unwrap_err();
+    assert!(matches!(err, Error::StillDraining { .. }), "{err:?}");
 }
 
 fn binary_watch_restarts() {
@@ -791,6 +807,53 @@ fn drain_ack_timeout() {
     });
 }
 
+/// Against an agent that predates `drain` (its `hello` has no `drain` field), `Client::drain`
+/// fails with `Unsupported` without sending anything. The agent here is a fake that answers
+/// `hello` and records every later line.
+#[cfg(unix)]
+fn drain_unsupported_by_old_agent() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+
+    let fx = Fixture::new("drain-old", false);
+    let endpoint = fx.endpoint.clone().unwrap();
+    let _ = std::fs::remove_file(&endpoint);
+    let listener = UnixListener::bind(&endpoint).unwrap();
+    let agent = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut writer = stream.try_clone().unwrap();
+        let mut lines = BufReader::new(stream).lines();
+        let hello: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+        assert_eq!(hello["kind"], "hello");
+        let reply = json!({
+            "kind": "response",
+            "id": hello["id"],
+            "body": {
+                "protocol": 1,
+                "pid": 7,
+                "started_at": {"secs_since_epoch": 0, "nanos_since_epoch": 0},
+                "app_version": "1.0.0",
+            },
+        });
+        writeln!(writer, "{reply}").unwrap();
+        // Until the client hangs up.
+        lines.map(Result::unwrap).collect::<Vec<_>>()
+    });
+    let app = fx.app("1.0.0");
+    block_on(async {
+        let client = app.connect().await.unwrap();
+        assert!(!client.hello().drain);
+        let err = client.drain(Duration::from_secs(1)).await.unwrap_err();
+        assert!(matches!(err, Error::Unsupported("drain")), "{err:?}");
+    });
+    let rest = agent.join().unwrap();
+    assert!(rest.is_empty(), "sent after hello: {rest:?}");
+    let _ = std::fs::remove_file(&endpoint);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Harness
 
@@ -830,6 +893,10 @@ fn tests() -> Vec<Test> {
         let mut tests = tests;
         tests.push(("hung_agent_reported", hung_agent_reported));
         tests.push(("drain_ack_timeout", drain_ack_timeout));
+        tests.push((
+            "drain_unsupported_by_old_agent",
+            drain_unsupported_by_old_agent,
+        ));
         tests
     };
     tests

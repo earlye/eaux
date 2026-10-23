@@ -176,8 +176,10 @@ file. It never kills the agent.
   reply is written, so a drain never cuts that reply off.
   `Client::drain(timeout)` waits up to `timeout` in total for the
   acknowledgement and then for the agent to close the connection. Timing out
-  before the acknowledgement returns `Error::Hung`, and the drain may not be
-  in effect. Timing out after it returns `Error::StillDraining`, and the agent
+  before the acknowledgement returns `Error::Hung`: the drain was sent but not
+  acknowledged, so whether the agent received it is unknown; if it did, the
+  drain is in effect once the agent resumes. Timing out after it returns
+  `Error::StillDraining`, and the agent
   still stops once idle. Against an agent that predates `drain` it
   fails at once with `Error::Unsupported`; use `shutdown` there.
 
@@ -247,8 +249,9 @@ binary is its own dummy agent: given `--dummy-agent` it serves instead of
 running tests. The tests cover cold start, concurrent clients ending with
 one agent, recovery from `kill -9` with a stale endpoint, `shutdown` with busy
 refusal, `drain` (idle, waiting out busy and requests in flight, timing out
-before and after the acknowledgement, and winning over a binary-watch restart
-while busy or with a request in flight), idle exit, version mismatch with restart, the Windows
+before and after the acknowledgement, refusal by an agent that predates it,
+winning over a binary change made while busy, and keeping a binary change
+made after it from restarting an agent with a request in flight), idle exit, version mismatch with restart, the Windows
 shadow copy, binary-watch restart, a piped CLI whose `output()` returns after
 it cold-starts the agent, and (Unix) hung-agent reporting. CI runs them on Linux,
 macOS and Windows.

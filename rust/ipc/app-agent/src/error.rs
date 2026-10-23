@@ -13,8 +13,9 @@ pub enum Error {
     /// No agent is listening on the endpoint (returned by [`App::connect`](crate::App::connect)).
     NotRunning,
     /// The agent accepted the connection but did not answer `hello` in time, or did not
-    /// acknowledge [`Client::drain`](crate::Client::drain) before its timeout (so the drain may
-    /// not be in effect).
+    /// acknowledge [`Client::drain`](crate::Client::drain) before its timeout. The drain was
+    /// sent, so whether the agent received it is unknown; if it did, the drain is in effect once
+    /// the agent resumes.
     /// The crate never kills it. `pid` comes from the lock file when connecting, or from
     /// `hello` for `drain`.
     Hung { pid: Option<u32> },

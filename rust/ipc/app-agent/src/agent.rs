@@ -275,11 +275,11 @@ pub(crate) async fn serve<H: Handler>(app: &App, handler: H) -> Result<Stopped> 
                 {
                     last_watch = Instant::now();
                     let now = file_id(&installed);
-                    // A drain suppresses binary-change restarts: the agent stops once idle
-                    // instead.
                     if now.is_some()
                         && now != *original
                         && shared.handler.busy().is_none()
+                        // `commit` fails once a drain is committed, so a drain suppresses the
+                        // restart; the agent stops once idle instead.
                         && shared.commit(Stopped::Restarted)
                     {
                         break Stopped::Restarted;
