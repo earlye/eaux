@@ -4,8 +4,9 @@
 //! <idle-ms> <watch-ms|off>` it serves; launched as `agent --dummy-client <app> <endpoint>` it is
 //! a CLI that connects (spawning the agent if needed), prints the agent's pid and exits; launched
 //! as `agent --squat <lock> <endpoint>` it takes the lock and listens without ever accepting, as a
-//! hung agent would; otherwise it runs the tests below, each in its own thread with its own app name and endpoint so they can
-//! run in parallel. Optional positional arguments filter tests by substring, like libtest.
+//! hung agent would; otherwise it runs the tests below, each in its own thread with its own app
+//! name and endpoint so they can run in parallel. Optional positional arguments filter tests by
+//! substring, like libtest.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -1024,8 +1025,8 @@ fn kill_peer_pid() {
     });
 }
 
-/// `App::kill` on a hung agent returns its pid with the lock already free, so a new agent can
-/// start right away.
+/// `App::kill` on a hung agent (stopped with SIGSTOP on Unix; live on Windows) returns its pid with
+/// the lock already free, so a new agent can start right away.
 fn kill_hung_agent() {
     let fx = Fixture::new("kill-hung", false);
     let app = fx.app("1.0.0");

@@ -273,9 +273,9 @@ before and after the acknowledgement, refusal by an agent that predates it,
 winning over a binary change made while busy, and keeping a binary change
 made after it from restarting an agent with a request in flight), idle exit, version mismatch with restart, the Windows
 shadow copy, binary-watch restart, a piped CLI whose `output()` returns after
-it cold-starts the agent, `kill` (of a hung agent, of a listener that never accepts with
-its backlog empty and full, with no agent, and with the lock held but nothing listening),
-and (Unix) hung-agent reporting. CI runs them on Linux,
+it cold-starts the agent, `kill` (of a hung agent, of a listener that never
+accepts with its backlog empty and full, with no agent, and with the lock held
+but nothing listening), and (Unix) hung-agent reporting. CI runs them on Linux,
 macOS and Windows.
 
 ## License
