@@ -65,3 +65,10 @@ own**, but kills when the caller explicitly asks. The docs and messages need upd
   refuse with an error, never kill. Verify with a CI test on all three OSes (the matrix in
   `.github/workflows/rust.yml` already covers them): a child binds and never accepts; assert peer
   pid equals the child pid, and record behaviour once the backlog is full.
+- Q: API shape? — A: One entry point, `App::kill(&self) -> Result<u32>` (returns the killed pid);
+  no `Client::kill`. It works without `hello` (the connect-time `Hung` case has no `Client`), so
+  the pid always comes from the endpoint peer, and the `hello.pid` fallback is dropped. It waits,
+  bounded by `spawn_timeout`, for the lock to be released before returning, so
+  `kill()` + `connect_or_spawn()` works directly. New errors: `NotRunning` (lock not held) and
+  `Unverified` (lock held but holder can't be confirmed; nothing killed). Open to iterating if it
+  proves awkward for firkin.
