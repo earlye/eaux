@@ -1,53 +1,66 @@
-# app-agent: caller-requested force kill (target 0.0.1-alpha.3)
+# app-agent: caller-requested force kill (target 0.0.1-alpha.4)
 
 ## Context
 
 Requested by Early via the firkin session `earlye/a0c542bdb2e7/agent-stop-while-busy`.
 
 firkin is designing `firkin agent stop --force`. Early decided the force-kill belongs in
-app-agent, not firkin. It is the companion to the drain-then-stop request
-(`issues/issue-01a1693e-db0d-7025-b8c1-9b8cc9d85f0e-app-agent-drain-then-stop.md`), which leaves
-killing out of scope. It is tracked separately because it changes a crate-wide stance and has
-its own safety concerns.
+app-agent, not firkin. It is the companion to drain-then-stop (shipped in 0.0.1-alpha.3,
+`issues/resolved/resolved-01a1693e-db0d-7025-b8c1-9b8cc9d85f0e-app-agent-drain-then-stop.md`),
+which leaves killing out of scope.
 
 ## Stance change
 
 app-agent currently says it never kills: `Error::Hung`'s doc reads "The crate never kills it",
-and its `Display` says "it was not killed". The stance changes to: the crate never kills **on its
-own**, but kills when the caller explicitly asks. The docs and messages need updating to match.
+its `Display` says "it was not killed", and `README.md:155-156` says "It never kills the agent."
+The stance becomes: the crate never kills **on its own**; it kills only when the caller calls
+`App::kill()`. Update the docs and messages to match.
 
-## What Early agreed
+## Design (settled in the 2026-10-23 grill)
 
-- **Resolve the pid** from `hello` (`Hello::pid`) when the agent answers. If it doesn't, fall back
-  to the pid in `Error::Hung { pid }`, which is read from the lock file.
-- **Never kill a stale pid.** Kill a lock-file pid only after confirming that process still holds
-  the lock, because the recorded pid can be stale and belong to an unrelated process.
-- **The kill is `kill -9`** (SIGKILL) on Unix and `TerminateProcess` on Windows.
+- **API:** `App::kill(&self) -> Result<u32>`, returning the killed pid. No `Client::kill`: the
+  connect-time `Hung` case has no `Client`, and `kill` doesn't need `hello`.
+- **Pid source: the endpoint's kernel-reported peer pid**, not the lock file and not `hello`.
+  `SO_PEERCRED` (Linux), `LOCAL_PEERPID` (macOS), `GetNamedPipeServerProcessId` (Windows, already
+  wrapped by `transport::peer_pid`). The agent takes the lock before binding, so the listener is
+  the lock holder, and a hung agent still completes connects via the listen backlog.
+- **Pin before killing:**
+  - Linux: `pidfd_open` on the peer pid, confirm the connection is still open, kill through the
+    pidfd (`pidfd_send_signal`, SIGKILL).
+  - Windows: `OpenProcess(PROCESS_TERMINATE)`, re-check the pipe server pid, `TerminateProcess`.
+  - macOS: no pidfd; `kill(pid, SIGKILL)` with a small residual race between check and kill.
+- **Nothing answers on the endpoint:** if the lock isn't held → `Error::NotRunning`. If the lock
+  is held, Linux may fall back to `/proc/locks` (the agent's flock shows its own pid); otherwise
+  `Error::Unverified`, and nothing is killed. **Never kill an unconfirmed pid.**
+- **Wait for release:** after the kill, wait (bounded by `spawn_timeout`) until the lock is free,
+  so `kill()` followed by `connect_or_spawn()` works directly.
+- **No escalation:** a drain timeout only reports failure (`Hung` / `StillDraining`). Killing
+  requires the user to actively choose `--force`; the caller maps that to `App::kill()`. No
+  `drain_or_kill` helper.
 
-## Open questions (not discussed with Early)
+Superseded: the original plan resolved the pid from `Hello::pid`, falling back to the lock-file
+pid in `Error::Hung { pid }` after confirming it held the lock. Dropped because the endpoint peer
+pid is authoritative in every case and avoids the lock-then-write-pid window in `try_acquire`.
 
-- **How to confirm the pid holds the lock.** `try_lock` failing shows that *someone* holds the
-  lock, not that the recorded pid does. `try_acquire` takes the lock first and only then truncates
-  and writes its pid, so for a short window a live holder sits next to the previous holder's pid.
-  Possible approaches: Linux `/proc/locks`, a pidfd (Linux) or process handle (Windows) opened
-  before the check and killed through, so the pid can't be reused between the check and the kill.
-- **Pid reuse between check and kill** applies even to a pid from `hello`, if the agent exits
-  between `hello` and the kill.
-- **API shape**, e.g. `App::kill()` vs `Client::kill()`, and whether it waits for the lock to be
-  released before returning.
-- **Interaction with drain**: whether a drain timeout can escalate to a kill inside the crate, or
-  whether escalation stays with the caller (firkin).
+## Tests
+
+- CI matrix (`.github/workflows/rust.yml:23`) covers ubuntu, macos, windows.
+- Peer-pid test: a child binds the endpoint and never accepts; assert the peer pid equals the
+  child's pid; then fill the backlog and record behaviour per OS. If macOS can't report a peer
+  pid with a full backlog, `kill` must return `Unverified` there, not kill.
+- `kill` of a hung agent: returns its pid, the lock is free on return, `connect_or_spawn` succeeds.
+- `kill` with no agent → `NotRunning`.
 
 ## Relevant files
 
-- `rust/ipc/app-agent/src/error.rs:14-17`: `Error::Hung { pid }` and the "never kills" doc.
-- `rust/ipc/app-agent/src/error.rs:47-50`: `Hung` `Display` text ("it was not killed").
-- `rust/ipc/app-agent/src/client.rs:378-380`: `Hung` pid comes from `lock::read_pid`.
-- `rust/ipc/app-agent/src/lock.rs:19-43`: `try_acquire` (lock, then write pid) and `read_pid`
-  (documented as possibly stale).
-- `rust/ipc/app-agent/src/protocol.rs:82`: `Hello::pid`.
-- `rust/ipc/app-agent/src/windows.rs`: existing Windows process code, likely home for
-  `TerminateProcess`.
+- `rust/ipc/app-agent/src/error.rs:15-21`: `Error::Hung { pid }` and the "never kills" doc.
+- `rust/ipc/app-agent/src/error.rs:58-61`: `Hung` `Display` text ("it was not killed").
+- `rust/ipc/app-agent/src/app.rs`: `App`; add `kill` beside `connect` (:111).
+- `rust/ipc/app-agent/src/lock.rs:20-44`: `try_acquire` (lock, then write pid), `read_pid`.
+- `rust/ipc/app-agent/src/transport.rs:34-37`: Windows `peer_pid`.
+- `rust/ipc/app-agent/src/windows.rs`: process APIs; `TerminateProcess` is in the already-enabled
+  `Win32_System_Threading` feature.
+- `rust/ipc/app-agent/README.md:155-156`: "never kills" stance.
 
 ## Grill Log
 
