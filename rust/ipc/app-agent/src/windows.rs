@@ -31,7 +31,7 @@ use windows_sys::Win32::System::Threading::{
     DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
     GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, OpenProcess, OpenProcessToken,
     PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_TERMINATE, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
+    PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
@@ -141,10 +141,36 @@ pub(crate) fn verify_server_owner(server_pid: u32) -> Result<()> {
     }
 }
 
+/// Whether `handle` is signaled within `millis`: for a process, whether it has exited.
+fn signaled(handle: RawHandle, millis: u32) -> io::Result<bool> {
+    // SAFETY: `handle` is a waitable handle the caller keeps open for the call.
+    match unsafe { WaitForSingleObject(handle, millis) } {
+        WAIT_OBJECT_0 => Ok(true),
+        WAIT_TIMEOUT => Ok(false),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
+/// A process [`kill_pipe_server`] terminated, held open so its exit can be awaited.
+pub(crate) struct Killed {
+    pub(crate) pid: u32,
+    process: OwnedHandle,
+}
+
+impl Killed {
+    /// Whether the process has fully exited. `TerminateProcess` returns before that; the process
+    /// is signaled only once its handles, including the pipe server's, are closed, so until then
+    /// a client can still connect to the dying agent and read EOF.
+    pub(crate) fn exited(&self) -> io::Result<bool> {
+        signaled(self.process.as_raw_handle(), 0)
+    }
+}
+
 /// Kill the process serving the named pipe `endpoint` (for [`App::kill`](crate::App::kill)).
 /// `None` if no pipe instance is free to connect to or the server could not be confirmed;
-/// nothing was killed then.
-pub(crate) fn kill_pipe_server(endpoint: &Path) -> Result<Option<u32>> {
+/// nothing was killed then. The process may still be exiting when this returns; see
+/// [`Killed::exited`].
+pub(crate) fn kill_pipe_server(endpoint: &Path) -> Result<Option<Killed>> {
     let path = U16CString::from_os_str(endpoint.as_os_str())
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     // A plain synchronous open: it fails at once with ERROR_PIPE_BUSY instead of waiting for an
@@ -182,7 +208,7 @@ pub(crate) fn kill_pipe_server(endpoint: &Path) -> Result<Option<u32>> {
     };
     verify_server_owner(pid)?;
     // SAFETY: plain call; a null result is handled.
-    let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+    let process = unsafe { OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, 0, pid) };
     if process.is_null() {
         let err = io::Error::last_os_error();
         return match err.raw_os_error() {
@@ -213,7 +239,7 @@ pub(crate) fn kill_pipe_server(endpoint: &Path) -> Result<Option<u32>> {
     if unsafe { TerminateProcess(process.as_raw_handle(), 1) } == 0 {
         return Err(io::Error::last_os_error().into());
     }
-    Ok(Some(pid))
+    Ok(Some(Killed { pid, process }))
 }
 
 /// Which file `path` is and when it last changed, beyond length and mtime: `CopyFile` (and so
@@ -265,11 +291,8 @@ impl Child {
 
     fn wait_for(&self, millis: u32) -> io::Result<Option<ExitStatus>> {
         let process = self.0.as_raw_handle();
-        // SAFETY: `process` is a process handle we own.
-        match unsafe { WaitForSingleObject(process, millis) } {
-            WAIT_OBJECT_0 => {}
-            WAIT_TIMEOUT => return Ok(None),
-            _ => return Err(io::Error::last_os_error()),
+        if !signaled(process, millis)? {
+            return Ok(None);
         }
         let mut code = 0u32;
         // SAFETY: `process` is a process handle we own; `code` is a valid out pointer.
