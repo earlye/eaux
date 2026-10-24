@@ -25,8 +25,9 @@ pub enum Error {
     /// be confirmed as the agent through its endpoint (nothing accepted the connection, e.g. its
     /// listen backlog is full), so nothing was killed.
     Unverified,
-    /// From [`App::kill`](crate::App::kill): the agent was killed, but its lock was still held
-    /// (or, on Windows, its process had not exited) when the spawn timeout ran out.
+    /// From [`App::kill`](crate::App::kill): the agent was killed, but it was not gone when the
+    /// spawn timeout ran out: its lock was still held or, on Windows, its process had not exited.
+    /// The name predates the Windows process check.
     LockNotReleased { pid: u32 },
     /// The spawned agent exited with an unexpected status before it started listening.
     AgentFailed { status: ExitStatus, log: PathBuf },
@@ -74,7 +75,7 @@ impl fmt::Display for Error {
             ),
             Error::LockNotReleased { pid } => write!(
                 f,
-                "killed agent (pid {pid}), but its lock was not released in time"
+                "killed agent (pid {pid}), but it did not exit and release its lock in time"
             ),
             Error::AgentFailed { status, log } => {
                 write!(f, "agent exited with {status}; see {}", log.display())

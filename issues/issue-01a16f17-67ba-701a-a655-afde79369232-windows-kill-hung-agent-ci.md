@@ -57,6 +57,16 @@ flake), or if the agent log showed a successor agent started and then exited.
   retry or spawn. That's a broader behaviour change with its own risks: it can't tell a dying
   agent from a crashing one.
 
+## Resolution
+
+Took the first candidate fix, with one change: `kill_pipe_server` opens the agent with
+`PROCESS_TERMINATE | PROCESS_SYNCHRONIZE` and returns the handle (`Killed`) rather than waiting
+itself, and `kill()` polls `Killed::exited()` (`WaitForSingleObject(h, 0)`) alongside the lock in
+its existing 10ms loop, bounded by the spawn timeout. Connect-or-spawn is unchanged.
+
+Pending confirmation: the root cause stays unverified until the windows-latest CI job passes.
+Move this file to `issues/resolved/` once it does.
+
 ## Blocking
 
 - `issues/issue-01a16f16-2b6b-77f5-9c54-807521e7332b-app-agent-version-bump-publish.md`:
@@ -66,11 +76,9 @@ flake), or if the agent log showed a successor agent started and then exited.
 
 - `rust/ipc/app-agent/tests/agent.rs:1030-1050`: `kill_hung_agent`; line 1046 panics.
 - `rust/ipc/app-agent/tests/agent.rs:344-352`: `lock_free`, which passed before the failing line.
-- `rust/ipc/app-agent/src/kill.rs:21-38`: `kill()`; it waits on the lock, not the process.
-- `rust/ipc/app-agent/src/windows.rs:147-216`: `kill_pipe_server`; `TerminateProcess` at 213,
-  with no wait afterwards.
-- `rust/ipc/app-agent/src/windows.rs:266-270`: an existing `WaitForSingleObject` helper on spawned
-  children, which could be reused.
+- `rust/ipc/app-agent/src/kill.rs`: `kill()`; waits on the lock and `Killed::exited()`.
+- `rust/ipc/app-agent/src/windows.rs`: `kill_pipe_server` and `Killed`; `signaled`, the
+  `WaitForSingleObject` helper that `Killed::exited` reuses.
 - `rust/ipc/app-agent/src/client.rs:420-427`: the `hello` read; `Ok(None)`, which means EOF, maps
   to `Disconnected`.
 - `.github/workflows/rust.yml`: the CI matrix.

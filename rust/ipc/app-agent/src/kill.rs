@@ -11,6 +11,7 @@
 //! the lock file can close before the pipe does; a client connecting in between reaches the dying
 //! agent and reads EOF instead of finding nothing there and spawning a successor.
 
+use std::io;
 use std::time::{Duration, Instant};
 
 use crate::app::App;
@@ -32,10 +33,18 @@ pub(crate) async fn kill(app: &App) -> Result<u32> {
         None => return Err(Error::NotRunning),
     };
     let pid = killed.pid;
-    // The OS releases the lock once the process is gone; wait for that, and for the process
-    // itself, so a successor can start.
+    // Wait for the lock to be released and, on Windows, for the process to exit, so a successor
+    // can start.
     let deadline = Instant::now() + app.spawn_timeout_value();
-    while lock::is_held(&locations.lock)? || !killed.exited()? {
+    let exited = || {
+        killed.exited().map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("killed agent (pid {pid}), but waiting for it to exit failed: {e}"),
+            )
+        })
+    };
+    while lock::is_held(&locations.lock)? || !exited()? {
         if Instant::now() >= deadline {
             return Err(Error::LockNotReleased { pid });
         }
@@ -59,9 +68,8 @@ mod unix {
     }
 
     impl Killed {
-        /// Always true: Unix waits on the lock alone. The kernel closes a SIGKILLed agent's
-        /// descriptors, lock and socket alike, as it dies, and a connect to a closed socket is
-        /// refused rather than reaching the dying agent.
+        /// Always true: on Unix a connect to a dead agent's socket is refused (reported as
+        /// `NotRunning`) rather than reaching it, so waiting on the lock is enough.
         pub(super) fn exited(&self) -> io::Result<bool> {
             Ok(true)
         }
