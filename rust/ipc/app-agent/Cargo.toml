@@ -1,6 +1,6 @@
 [package]
 name = "app-agent"
-version = "0.0.1-alpha.3"
+version = "0.0.1-alpha.4"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -30,6 +30,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
+    "Win32_System_Pipes",
     "Win32_System_Threading",
 ] }
 
@@ -37,7 +38,10 @@ windows-sys = { version = "0.61", features = [
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1.36", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1.36", features = ["rt-multi-thread", "macros", "time", "net"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
 
 # The integration test binary doubles as the dummy agent: when launched with
 # `--dummy-agent` it serves instead of running tests, so it needs its own main.

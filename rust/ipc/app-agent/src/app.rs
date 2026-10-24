@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::agent::{self, EXIT_ALREADY_RUNNING, Handler, Stopped};
 use crate::client::{self, Client};
 use crate::error::{Error, Result};
+use crate::kill;
 use crate::locations::{self, Locations};
 
 /// One app's agent: who it is, how to start it, and how it behaves.
@@ -80,7 +81,8 @@ impl App {
         self
     }
 
-    /// Client: how long [`App::connect_or_spawn`] keeps retrying after spawning (default 5s).
+    /// Client: how long [`App::connect_or_spawn`] keeps retrying after spawning, and how long
+    /// [`App::kill`] waits for the lock to be released (default 5s).
     pub fn spawn_timeout(mut self, timeout: Duration) -> Self {
         self.spawn_timeout = timeout;
         self
@@ -115,6 +117,23 @@ impl App {
     /// Connect to the agent, starting it detached first if it is not running.
     pub async fn connect_or_spawn(&self) -> Result<Client> {
         client::connect(self, true).await
+    }
+
+    /// Kill the agent (SIGKILL, or `TerminateProcess` on Windows) and return its pid. Works on a
+    /// hung agent: it needs no `hello`. The crate never kills on its own; this is the only way.
+    ///
+    /// The pid is the one the OS reports for the endpoint's server, and the process is pinned
+    /// before the kill (a pidfd on Linux, a process handle on Windows) and the connection
+    /// re-checked, so a recycled pid is not killed; macOS has no pidfd and keeps a small race
+    /// between that check and the kill. Waits up to the spawn timeout for the lock to be released,
+    /// so [`App::connect_or_spawn`] can follow directly.
+    ///
+    /// Fails with [`Error::NotRunning`] if nothing answers on the endpoint and nothing holds the
+    /// lock, [`Error::Unverified`] if the lock is held but nothing confirmable answers (nothing is
+    /// killed), and [`Error::LockNotReleased`] if the lock outlives the kill past the spawn
+    /// timeout.
+    pub async fn kill(&self) -> Result<u32> {
+        kill::kill(self).await
     }
 
     /// Be the agent: take the lock, bind, and serve `handler` until stopped.

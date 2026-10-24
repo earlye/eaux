@@ -11,14 +11,23 @@ pub enum Error {
     /// `pid` is read from the lock file and may be absent if it was not written yet.
     AlreadyRunning { pid: Option<u32> },
     /// No agent is listening on the endpoint (returned by [`App::connect`](crate::App::connect)).
+    /// From [`App::kill`](crate::App::kill): nothing answered on the endpoint and nothing holds
+    /// the lock.
     NotRunning,
     /// The agent accepted the connection but did not answer `hello` in time, or did not
     /// acknowledge [`Client::drain`](crate::Client::drain) before its timeout. The drain was
     /// sent, so whether the agent received it is unknown; if it did, the drain is in effect once
     /// the agent resumes.
-    /// The crate never kills it. `pid` comes from the lock file when connecting, or from
-    /// `hello` for `drain`.
+    /// The crate never kills it on its own; [`App::kill`](crate::App::kill) kills it on request.
+    /// `pid` comes from the lock file when connecting, or from `hello` for `drain`.
     Hung { pid: Option<u32> },
+    /// From [`App::kill`](crate::App::kill): something holds the agent lock, but no process could
+    /// be confirmed as the agent through its endpoint (nothing accepted the connection, e.g. its
+    /// listen backlog is full), so nothing was killed.
+    Unverified,
+    /// From [`App::kill`](crate::App::kill): the agent was killed, but its lock was still held
+    /// when the spawn timeout ran out.
+    LockNotReleased { pid: u32 },
     /// The spawned agent exited with an unexpected status before it started listening.
     AgentFailed { status: ExitStatus, log: PathBuf },
     /// The agent never became reachable within the spawn timeout.
@@ -59,6 +68,14 @@ impl fmt::Display for Error {
                 write!(f, "agent (pid {pid}) is not answering; it was not killed")
             }
             Error::Hung { pid: None } => write!(f, "agent is not answering; it was not killed"),
+            Error::Unverified => write!(
+                f,
+                "agent lock is held, but its holder could not be confirmed; nothing was killed"
+            ),
+            Error::LockNotReleased { pid } => write!(
+                f,
+                "killed agent (pid {pid}), but its lock was not released in time"
+            ),
             Error::AgentFailed { status, log } => {
                 write!(f, "agent exited with {status}; see {}", log.display())
             }
