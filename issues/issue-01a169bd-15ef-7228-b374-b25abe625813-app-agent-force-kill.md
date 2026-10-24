@@ -72,3 +72,6 @@ own**, but kills when the caller explicitly asks. The docs and messages need upd
   `kill()` + `connect_or_spawn()` works directly. New errors: `NotRunning` (lock not held) and
   `Unverified` (lock held but holder can't be confirmed; nothing killed). Open to iterating if it
   proves awkward for firkin.
+- Q: Can a drain timeout escalate to a kill inside the crate? — A: No. A drain timeout only
+  reports failure (`Hung` / `StillDraining`); killing requires the user to actively choose
+  `--force`, which the caller maps to `App::kill()`. No `drain_or_kill` helper.
