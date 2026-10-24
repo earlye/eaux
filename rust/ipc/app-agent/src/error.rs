@@ -26,7 +26,7 @@ pub enum Error {
     /// listen backlog is full), so nothing was killed.
     Unverified,
     /// From [`App::kill`](crate::App::kill): the agent was killed, but its lock was still held
-    /// when the spawn timeout ran out.
+    /// (or, on Windows, its process had not exited) when the spawn timeout ran out.
     LockNotReleased { pid: u32 },
     /// The spawned agent exited with an unexpected status before it started listening.
     AgentFailed { status: ExitStatus, log: PathBuf },

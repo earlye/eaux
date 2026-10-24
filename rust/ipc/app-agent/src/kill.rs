@@ -5,6 +5,11 @@
 //! agent still completes connects through the listen backlog (or its idle pipe instance). The
 //! process is pinned before the kill and the connection re-checked, so a pid recycled after the
 //! agent died is never signalled. A pid that cannot be confirmed this way is never killed.
+//!
+//! After the kill it waits for the agent to be gone: its lock released and, on Windows, its
+//! process exited. `TerminateProcess` returns while the process is still closing its handles, and
+//! the lock file can close before the pipe does; a client connecting in between reaches the dying
+//! agent and reads EOF instead of finding nothing there and spawning a successor.
 
 use std::time::{Duration, Instant};
 
@@ -21,14 +26,16 @@ use unix::kill_listener;
 pub(crate) async fn kill(app: &App) -> Result<u32> {
     let locations = app.locations()?;
     ensure_private_dir(&locations, false)?;
-    let pid = match kill_listener(&locations.endpoint)? {
-        Some(pid) => pid,
+    let killed = match kill_listener(&locations.endpoint)? {
+        Some(killed) => killed,
         None if lock::is_held(&locations.lock)? => return Err(Error::Unverified),
         None => return Err(Error::NotRunning),
     };
-    // The OS releases the lock once the process is gone; wait for that so a successor can start.
+    let pid = killed.pid;
+    // The OS releases the lock once the process is gone; wait for that, and for the process
+    // itself, so a successor can start.
     let deadline = Instant::now() + app.spawn_timeout_value();
-    while lock::is_held(&locations.lock)? {
+    while lock::is_held(&locations.lock)? || !killed.exited()? {
         if Instant::now() >= deadline {
             return Err(Error::LockNotReleased { pid });
         }
@@ -46,9 +53,23 @@ mod unix {
 
     use crate::error::Result;
 
+    /// A process [`kill_listener`] sent SIGKILL.
+    pub(super) struct Killed {
+        pub(super) pid: u32,
+    }
+
+    impl Killed {
+        /// Always true: Unix waits on the lock alone. The kernel closes a SIGKILLed agent's
+        /// descriptors, lock and socket alike, as it dies, and a connect to a closed socket is
+        /// refused rather than reaching the dying agent.
+        pub(super) fn exited(&self) -> io::Result<bool> {
+            Ok(true)
+        }
+    }
+
     /// Kill the process listening on `endpoint`. `None` if nothing accepted the connection or
     /// the listener could not be confirmed; nothing was killed then.
-    pub(super) fn kill_listener(endpoint: &Path) -> Result<Option<u32>> {
+    pub(super) fn kill_listener(endpoint: &Path) -> Result<Option<Killed>> {
         let Some(sock) = connect(endpoint)? else {
             return Ok(None);
         };
@@ -64,7 +85,7 @@ mod unix {
             return Ok(None);
         }
         target.kill()?;
-        Ok(Some(pid))
+        Ok(Some(Killed { pid }))
     }
 
     /// Connect without blocking. `None` when nothing accepts: no socket, nobody listening, or

@@ -125,13 +125,13 @@ impl App {
     /// The pid is the one the OS reports for the endpoint's server, and the process is pinned
     /// before the kill (a pidfd on Linux, a process handle on Windows) and the connection
     /// re-checked, so a recycled pid is not killed; macOS has no pidfd and keeps a small race
-    /// between that check and the kill. Waits up to the spawn timeout for the lock to be released,
-    /// so [`App::connect_or_spawn`] can follow directly.
+    /// between that check and the kill. Waits up to the spawn timeout for the lock to be released
+    /// and, on Windows, for the process to exit (its pipe can outlive the lock file briefly), so
+    /// [`App::connect_or_spawn`] can follow directly.
     ///
     /// Fails with [`Error::NotRunning`] if nothing answers on the endpoint and nothing holds the
     /// lock, [`Error::Unverified`] if the lock is held but nothing confirmable answers (nothing is
-    /// killed), and [`Error::LockNotReleased`] if the lock outlives the kill past the spawn
-    /// timeout.
+    /// killed), and [`Error::LockNotReleased`] if the agent is not gone by the spawn timeout.
     pub async fn kill(&self) -> Result<u32> {
         kill::kill(self).await
     }
