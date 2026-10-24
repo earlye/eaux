@@ -64,8 +64,8 @@ Took the first candidate fix, with one change: `kill_pipe_server` opens the agen
 itself, and `kill()` polls `Killed::exited()` (`WaitForSingleObject(h, 0)`) alongside the lock in
 its existing 10ms loop, bounded by the spawn timeout. Connect-or-spawn is unchanged.
 
-Pending confirmation: the root cause stays unverified until the windows-latest CI job passes.
-Move this file to `issues/resolved/` once it does.
+Pending confirmation: the root cause stays unverified until the windows-latest CI job on the
+fix's PR passes.
 
 ## Blocking
 
