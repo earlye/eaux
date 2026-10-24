@@ -2,8 +2,9 @@
 //!
 //! This binary is its own dummy agent: launched as `agent --dummy-agent <app> <version>
 //! <idle-ms> <watch-ms|off>` it serves; launched as `agent --dummy-client <app> <endpoint>` it is
-//! a CLI that connects (spawning the agent if needed), prints the agent's pid and exits; otherwise
-//! it runs the tests below, each in its own thread with its own app name and endpoint so they can
+//! a CLI that connects (spawning the agent if needed), prints the agent's pid and exits; launched
+//! as `agent --squat <lock> <endpoint>` it takes the lock and listens without ever accepting, as a
+//! hung agent would; otherwise it runs the tests below, each in its own thread with its own app name and endpoint so they can
 //! run in parallel. Optional positional arguments filter tests by substring, like libtest.
 
 use std::path::{Path, PathBuf};
@@ -111,6 +112,86 @@ fn client_main(args: &[String]) -> ExitCode {
             eprintln!("{e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Take the lock, listen on the endpoint with a backlog of one (one pipe instance on Windows) and
+/// never accept. Prints "ready" once listening.
+fn squat_main(args: &[String]) -> ExitCode {
+    let [lock, endpoint] = args else {
+        eprintln!("usage: --squat <lock> <endpoint>");
+        return ExitCode::FAILURE;
+    };
+    std::fs::create_dir_all(Path::new(lock).parent().unwrap()).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock)
+        .unwrap();
+    lock.try_lock().unwrap();
+    #[cfg(unix)]
+    let _listener = listen_backlog_one(endpoint);
+    #[cfg(windows)]
+    let (_runtime, _server) = {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .unwrap();
+        let server = runtime.block_on(async {
+            tokio::net::windows::named_pipe::ServerOptions::new()
+                .first_pipe_instance(true)
+                .max_instances(1)
+                .create(endpoint)
+                .unwrap()
+        });
+        (runtime, server)
+    };
+    println!("ready");
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+/// `std` listens with a backlog of up to 4096, more connections than a test may open descriptors.
+#[cfg(unix)]
+fn listen_backlog_one(endpoint: &str) -> std::os::fd::OwnedFd {
+    use std::os::fd::FromRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    let _ = std::fs::remove_file(endpoint);
+    let path = std::ffi::OsStr::new(endpoint).as_bytes();
+    // SAFETY: sockaddr_un is plain data; all-zero is a valid value.
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    assert!(path.len() < addr.sun_path.len(), "endpoint too long");
+    for (dst, src) in addr.sun_path.iter_mut().zip(path) {
+        *dst = *src as libc::c_char;
+    }
+    let len = std::mem::size_of::<libc::sockaddr_un>() - addr.sun_path.len() + path.len() + 1;
+    // SAFETY: plain calls on a descriptor we own; `addr` is a valid sockaddr_un of `len` bytes.
+    unsafe {
+        let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+        assert!(fd >= 0, "{}", std::io::Error::last_os_error());
+        let sock = std::os::fd::OwnedFd::from_raw_fd(fd);
+        assert_eq!(
+            libc::bind(
+                fd,
+                (&addr as *const libc::sockaddr_un).cast(),
+                len as libc::socklen_t
+            ),
+            0,
+            "{}",
+            std::io::Error::last_os_error()
+        );
+        assert_eq!(
+            libc::listen(fd, 1),
+            0,
+            "{}",
+            std::io::Error::last_os_error()
+        );
+        sock
     }
 }
 
@@ -256,6 +337,51 @@ fn kill_hard(pid: u32) {
         Command::new("kill").args(["-9", &pid.to_string()]).status()
     };
     assert!(status.unwrap().success(), "failed to kill {pid}");
+}
+
+/// Whether the agent lock is free, probed by taking it and letting it go.
+fn lock_free(app: &App) -> bool {
+    let lock = app.locations().unwrap().lock;
+    match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock)
+    {
+        Ok(file) => file.try_lock().is_ok(),
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+/// A `--squat` child: holds the lock and listens on the endpoint but never accepts. Killed on drop.
+struct Squatter(std::process::Child);
+
+impl Squatter {
+    fn start(app: &App) -> Self {
+        use std::io::BufRead;
+
+        let l = app.locations().unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("--squat")
+            .arg(&l.lock)
+            .arg(&l.endpoint)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let squatter = Squatter(child);
+        assert_eq!(line.trim(), "ready");
+        squatter
+    }
+}
+
+impl Drop for Squatter {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 /// Copy this test binary somewhere else, as if it were an installed app.
@@ -854,6 +980,92 @@ fn drain_unsupported_by_old_agent() {
     let _ = std::fs::remove_file(&endpoint);
 }
 
+/// `App::kill` gets the pid from the endpoint's server, not `hello`: a squatter that never accepts
+/// is killed by pid. With its backlog full, `kill` must report the right pid or `Unverified`,
+/// never another pid.
+fn kill_peer_pid() {
+    let fx = Fixture::new("kill-peer", false);
+    let app = fx.app("1.0.0");
+
+    let mut squatter = Squatter::start(&app);
+    let pid = block_on(app.kill()).unwrap();
+    assert_eq!(pid, squatter.0.id());
+    assert!(lock_free(&app));
+    assert!(!squatter.0.wait().unwrap().success());
+
+    let squatter = Squatter::start(&app);
+    let endpoint = app.locations().unwrap().endpoint;
+    block_on(async {
+        let mut queued = Vec::new();
+        let mut full = false;
+        for _ in 0..16 {
+            #[cfg(unix)]
+            let conn = tokio::net::UnixStream::connect(&endpoint).await;
+            #[cfg(windows)]
+            let conn = tokio::net::windows::named_pipe::ClientOptions::new().open(&endpoint);
+            match conn {
+                Ok(conn) => queued.push(conn),
+                Err(_) => {
+                    full = true;
+                    break;
+                }
+            }
+        }
+        let result = app.kill().await;
+        println!(
+            "kill_peer_pid: {} queued, backlog full: {full}, kill returned {result:?}",
+            queued.len()
+        );
+        match result {
+            Ok(pid) => assert_eq!(pid, squatter.0.id()),
+            Err(Error::Unverified) => {}
+            Err(e) => panic!("kill with a full backlog: {e:?}"),
+        }
+    });
+}
+
+/// `App::kill` on a hung agent returns its pid with the lock already free, so a new agent can
+/// start right away.
+fn kill_hung_agent() {
+    let fx = Fixture::new("kill-hung", false);
+    let app = fx.app("1.0.0");
+    block_on(async {
+        let pid = app.connect_or_spawn().await.unwrap().hello().pid;
+        if cfg!(unix) {
+            assert!(
+                Command::new("kill")
+                    .args(["-STOP", &pid.to_string()])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        assert_eq!(app.kill().await.unwrap(), pid);
+        assert!(lock_free(&app));
+        let client = app.connect_or_spawn().await.unwrap();
+        assert_ne!(client.hello().pid, pid);
+        assert_eq!(echo(&client, "back").await, "back");
+    });
+}
+
+fn kill_not_running() {
+    let fx = Fixture::new("kill-none", false);
+    let err = block_on(fx.app("1.0.0").kill()).unwrap_err();
+    assert!(matches!(err, Error::NotRunning), "{err:?}");
+}
+
+/// A held lock with nothing listening cannot be tied to a process, so nothing is killed.
+fn kill_unverified() {
+    let fx = Fixture::new("kill-unverified", false);
+    let app = fx.app("1.0.0");
+    let path = app.locations().unwrap().lock;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let lock = std::fs::File::create(path).unwrap();
+    lock.try_lock().unwrap();
+    let err = block_on(app.kill()).unwrap_err();
+    assert!(matches!(err, Error::Unverified), "{err:?}");
+}
+
 // ---------------------------------------------------------------------------------------------
 // Harness
 
@@ -887,6 +1099,10 @@ fn tests() -> Vec<Test> {
         ("shadow_copy", shadow_copy),
         ("binary_watch_restarts", binary_watch_restarts),
         ("piped_client_returns", piped_client_returns),
+        ("kill_peer_pid", kill_peer_pid),
+        ("kill_hung_agent", kill_hung_agent),
+        ("kill_not_running", kill_not_running),
+        ("kill_unverified", kill_unverified),
     ];
     #[cfg(unix)]
     let tests = {
@@ -909,6 +1125,9 @@ fn main() -> ExitCode {
     }
     if args.get(1).map(String::as_str) == Some("--dummy-client") {
         return client_main(&args[2..]);
+    }
+    if args.get(1).map(String::as_str) == Some("--squat") {
+        return squat_main(&args[2..]);
     }
     let filters: Vec<&str> = args[1..]
         .iter()

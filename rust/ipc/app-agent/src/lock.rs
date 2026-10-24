@@ -43,6 +43,17 @@ pub(crate) fn read_pid(path: &Path) -> Option<u32> {
     text.trim().parse().ok()
 }
 
+/// Whether some process holds the lock. Probes by taking it and releasing it at once, leaving the
+/// recorded pid alone; an agent starting during the probe exits with `EXIT_ALREADY_RUNNING`.
+pub(crate) fn is_held(path: &Path) -> io::Result<bool> {
+    let file = match OpenOptions::new().read(true).write(true).open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    Ok(!platform::try_lock(&file)?)
+}
+
 #[cfg(unix)]
 mod platform {
     use super::*;
@@ -109,8 +120,11 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let guard = try_acquire(&path).unwrap().expect("first acquire");
         assert!(try_acquire(&path).unwrap().is_none());
+        assert!(is_held(&path).unwrap());
         assert_eq!(read_pid(&path), Some(std::process::id()));
         drop(guard);
+        assert!(!is_held(&path).unwrap());
+        assert_eq!(read_pid(&path), Some(std::process::id()));
         let again = try_acquire(&path).unwrap();
         assert!(again.is_some());
         drop(again);

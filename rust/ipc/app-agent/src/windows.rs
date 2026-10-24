@@ -1,5 +1,5 @@
-//! Windows-only pieces: user SIDs, the pipe DACL, the pipe-owner check, spawning without leaking
-//! handles, and the shadow copy.
+//! Windows-only pieces: user SIDs, the pipe DACL, the pipe-owner check, killing the pipe server,
+//! spawning without leaking handles, and the shadow copy.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::OpenOptions;
@@ -13,7 +13,8 @@ use std::process::ExitStatus;
 use interprocess::os::windows::security_descriptor::SecurityDescriptor;
 use widestring::U16CString;
 use windows_sys::Win32::Foundation::{
-    DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_INSUFFICIENT_BUFFER, HANDLE, HLOCAL,
+    DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER,
+    ERROR_INVALID_PARAMETER, ERROR_PIPE_BUSY, GENERIC_READ, GENERIC_WRITE, HANDLE, HLOCAL,
     INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
@@ -21,15 +22,17 @@ use windows_sys::Win32::Security::{
     GetLengthSid, GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO, FILE_READ_ATTRIBUTES, FileBasicInfo,
-    GetFileInformationByHandle, GetFileInformationByHandleEx,
+    BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_BASIC_INFO, FILE_READ_ATTRIBUTES, FileBasicInfo,
+    GetFileInformationByHandle, GetFileInformationByHandleEx, OPEN_EXISTING,
 };
+use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, PeekNamedPipe};
 use windows_sys::Win32::System::Threading::{
     CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DETACHED_PROCESS,
     DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
     GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, OpenProcess, OpenProcessToken,
     PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
+    PROCESS_TERMINATE, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
+    UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 use crate::error::{Error, Result};
@@ -136,6 +139,81 @@ pub(crate) fn verify_server_owner(server_pid: u32) -> Result<()> {
     } else {
         Err(Error::NotOwner { pid: server_pid })
     }
+}
+
+/// Kill the process serving the named pipe `endpoint` (for [`App::kill`](crate::App::kill)).
+/// `None` if no pipe instance is free to connect to or the server could not be confirmed;
+/// nothing was killed then.
+pub(crate) fn kill_pipe_server(endpoint: &Path) -> Result<Option<u32>> {
+    let path = U16CString::from_os_str(endpoint.as_os_str())
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    // A plain synchronous open: it fails at once with ERROR_PIPE_BUSY instead of waiting for an
+    // instance the way the async transport does.
+    // SAFETY: `path` is NUL-terminated; a failed open is checked below.
+    let pipe = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    if pipe == INVALID_HANDLE_VALUE {
+        let err = io::Error::last_os_error();
+        return match err.raw_os_error() {
+            Some(code) if code == ERROR_FILE_NOT_FOUND as i32 || code == ERROR_PIPE_BUSY as i32 => {
+                Ok(None)
+            }
+            _ => Err(err.into()),
+        };
+    }
+    let pipe = owned(pipe);
+    let server_pid = || {
+        let mut pid = 0u32;
+        // SAFETY: `pipe` is an open pipe client handle; `pid` is a valid out pointer.
+        let ok = unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle(), &mut pid) };
+        (ok != 0 && pid != 0).then_some(pid)
+    };
+    let Some(pid) = server_pid() else {
+        return Ok(None);
+    };
+    verify_server_owner(pid)?;
+    // SAFETY: plain call; a null result is handled.
+    let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+    if process.is_null() {
+        let err = io::Error::last_os_error();
+        return match err.raw_os_error() {
+            // No such process any more.
+            Some(code) if code == ERROR_INVALID_PARAMETER as i32 => Ok(None),
+            _ => Err(err.into()),
+        };
+    }
+    // The open handle keeps `pid` from being reused. While the pipe is still connected its server
+    // is alive, so the handle is the agent's.
+    let process = owned(process);
+    let mut avail = 0u32;
+    // SAFETY: a zero-length peek on our open pipe handle; only `avail` is written.
+    let connected = unsafe {
+        PeekNamedPipe(
+            pipe.as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut avail,
+            std::ptr::null_mut(),
+        )
+    } != 0;
+    if !connected || server_pid() != Some(pid) {
+        return Ok(None);
+    }
+    // SAFETY: `process` is a valid handle opened with PROCESS_TERMINATE.
+    if unsafe { TerminateProcess(process.as_raw_handle(), 1) } == 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    Ok(Some(pid))
 }
 
 /// Which file `path` is and when it last changed, beyond length and mtime: `CopyFile` (and so

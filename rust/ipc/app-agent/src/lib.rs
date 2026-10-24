@@ -12,6 +12,7 @@ mod agent;
 mod app;
 mod client;
 mod error;
+mod kill;
 mod locations;
 mod lock;
 mod protocol;

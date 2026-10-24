@@ -15,7 +15,7 @@ bump in the meantime as breaking.
 
 ```toml
 [dependencies]
-app-agent = "=0.0.1-alpha.3"
+app-agent = "=0.0.1-alpha.4"
 ```
 
 ## Usage
@@ -86,6 +86,7 @@ producing them.
 | --- | --- |
 | `App` | Builder: name, version, `agent_program`, `agent_args`, `endpoint`, `idle_timeout`, `watch_binary`, `spawn_timeout`, `hello_timeout`. |
 | `App::connect` / `App::connect_or_spawn` | Get a `Client`. The first fails with `Error::NotRunning`; the second starts the agent if needed. |
+| `App::kill` | Kill the agent, hung or not, and return its pid once its lock is free (`Error::NotRunning` if there is none; `Error::Unverified` if it cannot be confirmed, and then nothing is killed). |
 | `App::run` / `App::serve` | Become the agent. `run` maps the outcome to an `ExitCode` for `main`; `serve` returns `Stopped` or `Error`. |
 | `App::locations` | The resolved `Locations` (endpoint, lock, log). |
 | `Client::call` / `Client::subscribe` | One response, or a `Subscription` stream of events. |
@@ -153,7 +154,26 @@ losers exit with code 75, and every client connects to the winner. If an
 agent exits with any other code before it listens, the client reports
 `Error::AgentFailed` with the log path. If `hello` gets no answer within
 `hello_timeout`, the client reports `Error::Hung` with the pid from the lock
-file. It never kills the agent.
+file. The crate never kills the agent on its own; `App::kill` kills it when the
+caller asks.
+
+**Force kill.** `App::kill` kills the agent with SIGKILL (`TerminateProcess` on
+Windows) and returns its pid. It does not send `hello`, so it works on a hung
+agent, and nothing in the crate calls it: a drain or `hello` timeout only
+reports `Error::Hung` or `Error::StillDraining`. The pid is the one the OS
+reports for whoever serves the endpoint (`SO_PEERCRED` on Linux,
+`LOCAL_PEERPID` on macOS, `GetNamedPipeServerProcessId` on Windows), not the
+lock file. The agent binds only while holding the lock, so that process is the
+lock holder, and a hung agent still completes connects through its listen
+backlog. Before killing, the process is pinned and the connection re-checked,
+so a pid reused after the agent died is never killed: a pidfd on Linux, an
+open process handle on Windows. macOS has no pidfd, which leaves a small race
+between the check and the kill. If nothing answers on the endpoint, `kill`
+returns `Error::NotRunning` when the lock is free, and `Error::Unverified`
+when it is held (for example, a full backlog), killing nothing. After the
+kill it waits up to `spawn_timeout` for the lock to be released, so
+`connect_or_spawn` can follow at once; if the lock is still held then, it
+returns `Error::LockNotReleased`.
 
 **Built-in messages.**
 
@@ -253,7 +273,9 @@ before and after the acknowledgement, refusal by an agent that predates it,
 winning over a binary change made while busy, and keeping a binary change
 made after it from restarting an agent with a request in flight), idle exit, version mismatch with restart, the Windows
 shadow copy, binary-watch restart, a piped CLI whose `output()` returns after
-it cold-starts the agent, and (Unix) hung-agent reporting. CI runs them on Linux,
+it cold-starts the agent, `kill` (of a hung agent, of a listener that never accepts with
+its backlog empty and full, with no agent, and with the lock held but nothing listening),
+and (Unix) hung-agent reporting. CI runs them on Linux,
 macOS and Windows.
 
 ## License
