@@ -36,15 +36,19 @@ pub(crate) async fn kill(app: &App) -> Result<u32> {
     // Wait for the lock to be released and, on Windows, for the process to exit, so a successor
     // can start.
     let deadline = Instant::now() + app.spawn_timeout_value();
-    let exited = || {
-        killed.exited().map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("killed agent (pid {pid}), but waiting for it to exit failed: {e}"),
-            )
-        })
+    let after_kill = |what: &str, e: io::Error| {
+        io::Error::new(
+            e.kind(),
+            format!("killed agent (pid {pid}), but {what} failed: {e}"),
+        )
     };
-    while lock::is_held(&locations.lock)? || !exited()? {
+    let held = || lock::is_held(&locations.lock).map_err(|e| after_kill("checking its lock", e));
+    let exited = || {
+        killed
+            .exited()
+            .map_err(|e| after_kill("waiting for it to exit", e))
+    };
+    while held()? || !exited()? {
         if Instant::now() >= deadline {
             return Err(Error::LockNotReleased { pid });
         }

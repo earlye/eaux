@@ -173,8 +173,8 @@ returns `Error::NotRunning` when the lock is free, and `Error::Unverified`
 when it is held (for example, a full backlog), killing nothing. After the
 kill it waits up to `spawn_timeout` for the lock to be released and, on
 Windows, for the process to exit, since its pipe can outlive the lock file
-briefly. `connect_or_spawn` can then follow at once; if the agent is not gone
-by then, it returns `Error::LockNotReleased`.
+briefly; if the agent is not gone by then, `kill` returns
+`Error::LockNotReleased`. Otherwise `connect_or_spawn` can follow at once.
 
 **Built-in messages.**
 

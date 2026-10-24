@@ -27,7 +27,6 @@ pub enum Error {
     Unverified,
     /// From [`App::kill`](crate::App::kill): the agent was killed, but it was not gone when the
     /// spawn timeout ran out: its lock was still held or, on Windows, its process had not exited.
-    /// The name predates the Windows process check.
     LockNotReleased { pid: u32 },
     /// The spawned agent exited with an unexpected status before it started listening.
     AgentFailed { status: ExitStatus, log: PathBuf },

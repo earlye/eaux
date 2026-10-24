@@ -82,7 +82,8 @@ impl App {
     }
 
     /// Client: how long [`App::connect_or_spawn`] keeps retrying after spawning, and how long
-    /// [`App::kill`] waits for the lock to be released (default 5s).
+    /// [`App::kill`] waits for the lock to be released and, on Windows, for the process to exit
+    /// (default 5s).
     pub fn spawn_timeout(mut self, timeout: Duration) -> Self {
         self.spawn_timeout = timeout;
         self
