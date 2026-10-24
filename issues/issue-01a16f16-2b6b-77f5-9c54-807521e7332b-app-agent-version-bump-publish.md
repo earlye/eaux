@@ -13,6 +13,11 @@ State as of 2026-10-24:
   **alpha.3 was never published.**
 - There are no git tags for Rust crates. The Go modules are tagged `go/<path>/vX.Y.Z`.
 
+## Blocked by
+
+- `issues/issue-01a16f17-67ba-701a-a655-afde79369232-windows-kill-hung-agent-ci.md`: CI is red on
+  `main` (Windows `kill_hung_agent`).
+
 ## Blocker: CI is red on `main`
 
 `rust/README.md` says to publish only after the `rust` workflow passes on every OS and the MSRV
