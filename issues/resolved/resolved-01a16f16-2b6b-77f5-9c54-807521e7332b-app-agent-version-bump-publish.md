@@ -67,3 +67,11 @@ In that case it still needs a fix before publishing, but a different one.
 - `.github/workflows/rust.yml`: the CI matrix.
 - `issues/resolved/resolved-01a169bd-15ef-7228-b374-b25abe625813-app-agent-force-kill.md`: the
   force-kill issue that introduced the failing test.
+
+## Resolution (2026-10-24)
+
+- PR #5 fixed the Windows `kill_hung_agent` failure. The `rust` workflow passed on `main` at
+  `7db9141` (run 40155627600) on ubuntu, macos, windows-latest and MSRV 1.89.
+- Published `app-agent 0.0.1-alpha.4` to crates.io from `7db9141` with a clean tree, after a
+  `make package` dry run. alpha.3 was skipped on crates.io.
+- Tagged `7db9141` as `rust/ipc/app-agent/v0.0.1-alpha.4` and pushed the tag.
