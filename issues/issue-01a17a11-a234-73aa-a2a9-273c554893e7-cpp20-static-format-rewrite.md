@@ -49,7 +49,8 @@ and also boost-style `%N%`.
 
 ## Open questions
 
-- Should brace-style `{}` syntax be supported alongside printf syntax? This is Early's call.
+- Brace-style `{}` syntax: Early sees no reason not to support it alongside printf syntax, but
+  wants to grill the exact syntax before implementing it.
 
 ## Prior art
 
