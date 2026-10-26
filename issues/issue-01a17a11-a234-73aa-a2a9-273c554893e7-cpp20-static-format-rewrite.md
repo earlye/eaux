@@ -78,3 +78,8 @@ These are in the `stdplus` repo, not this one:
   build, `ctest` under both g++ and clang++), `c++` joins `LANGUAGES` in the root Makefile, and
   `.github/workflows/cpp.yml` runs a gcc/clang matrix path-filtered to `c++/**`. The library is a
   header-only `INTERFACE` target, so CMake exists only for tests and the benchmark.
+- Q: Test framework and compile-fail tests? — A: doctest via CMake `FetchContent` (pinned tag)
+  for runtime output tests; parse-level checks stay as plain `static_assert`s. Each promised
+  `static_assert` diagnostic gets a one-file compile-fail test registered with CTest, passing only
+  when compilation fails and stderr matches the expected message (`PASS_REGULAR_EXPRESSION`),
+  under both g++ and clang++.
