@@ -88,3 +88,20 @@ These are in the `stdplus` repo, not this one:
   printf. Autodetection breaks on JSON-with-printf and on `100%` in brace strings; mixing both in
   one string would break each standard. `_fmt` is left alone because `std::` may claim it. Both
   suffixes share the segment representation and conversion code; only the parsers differ.
+- Q: How are arguments bound and what is the result? — A: Eager calls: `"x=%d"_pfmt(a, b)`
+  returns `std::string`; `"..."_pfmt.to(out_iterator, a, b)` writes without allocating. `%`
+  chaining is dropped, along with the lazy expression object, its dangling-pointer gap, and the
+  `std::tuple` storage idea. Early's condition: dozens of arguments must work (tabular output of
+  structural analysis data).
+- Q (Early): Does the `fixed_string` NTTP remove typestring's ~128-char cap? — A: Yes; `N` is
+  deduced from the literal. What remains are compiler budgets (constexpr steps, template depth).
+  To stay clear of them, parse into a `constexpr` array of segment descriptors and expand over
+  arguments with `std::index_sequence`/folds, never per-segment or per-argument recursion. Tests
+  cover a ~4 KB format string and ~64 arguments so a regression to recursion breaks the build.
+- Q: How strict is the printf-side type check? — A: A specifier names a type category: `d i`
+  any integral except `bool`/char types; `u o x X` any integral, negatives cast to unsigned as
+  printf does; `f F e E g G a A` floating; `c` char types (assumed to exclude `int`; Early may
+  revisit); `s` string-like (`char const*`, `std::string`, `std::string_view`); `p` pointers.
+  Length modifiers (`hh h l ll z j t L`) are accepted and ignored, so `sprintf` strings paste in
+  unchanged. Anything else is a compile error naming argument index, specifier and type. The brace
+  side follows `std::format`'s rules.
