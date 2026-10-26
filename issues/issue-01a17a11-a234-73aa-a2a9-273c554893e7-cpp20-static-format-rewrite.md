@@ -105,3 +105,9 @@ These are in the `stdplus` repo, not this one:
   Length modifiers (`hh h l ll z j t L`) are accepted and ignored, so `sprintf` strings paste in
   unchanged. Anything else is a compile error naming argument index, specifier and type. The brace
   side follows `std::format`'s rules.
+- Q (Early): Which printf specifier formats user-defined types? — A: Two of them. `%v` is the
+  runtime route: `std::formatter<T>` (via `std::format_to(out, "{}", v)`) if specialized, else
+  `operator<<(std::ostream&, T const&)`, else a compile error naming `T` and both options. `%V`
+  (Early's addition) uses this library's own `static_format::formatter<T>`, whose spec is parsed
+  at compile time. For both, width and `-` pad the produced text and precision truncates, as with
+  `%s`; other flags are compile errors.
