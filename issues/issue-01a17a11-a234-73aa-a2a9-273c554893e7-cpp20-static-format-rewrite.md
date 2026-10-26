@@ -73,3 +73,8 @@ These are in the `stdplus` repo, not this one:
   exactly: `{[arg-id][:[[fill]align][sign][#][0][width][.precision][type]]}`, with `{{`/`}}`
   escapes. Deferred for now: nested dynamic width/precision (`{:{}}`), chrono/range specs, and
   the `L` locale flag.
+- Q: Build system for the repo's first C++ tree? — A: CMake, with strong PTSD-based
+  reservations. Claude maintains it so Early doesn't have to. `c++/Makefile` wraps it (configure,
+  build, `ctest` under both g++ and clang++), `c++` joins `LANGUAGES` in the root Makefile, and
+  `.github/workflows/cpp.yml` runs a gcc/clang matrix path-filtered to `c++/**`. The library is a
+  header-only `INTERFACE` target, so CMake exists only for tests and the benchmark.
