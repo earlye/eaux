@@ -111,3 +111,10 @@ These are in the `stdplus` repo, not this one:
   (Early's addition) uses this library's own `static_format::formatter<T>`, whose spec is parsed
   at compile time. For both, width and `-` pad the produced text and precision truncates, as with
   `%s`; other flags are compile errors.
+- Q: How does `%V` carry a custom spec, and how do user types resolve on the brace side? — A:
+  An optional braced spec before the letter: `%[N$][flags][width][.precision][{spec}]V`, e.g.
+  `"%-12{.3;kN}V"`. `static_format::formatter<T>` has `static constexpr Spec parse(string_view)`
+  (structural `Spec`, an invalid spec fails the build) and a runtime `format(spec, out, value)`.
+  On the brace side, `{:spec}` on a user type tries `static_format::formatter<T>`, then
+  `std::formatter<T>`, then `operator<<` (empty spec only). See
+  `c++/format/static-format/docs/adr/0001-printf-user-type-specifiers.md`.
