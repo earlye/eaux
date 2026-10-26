@@ -118,3 +118,11 @@ These are in the `stdplus` repo, not this one:
   On the brace side, `{:spec}` on a user type tries `static_format::formatter<T>`, then
   `std::formatter<T>`, then `operator<<` (empty spec only). See
   `c++/format/static-format/docs/adr/0001-printf-user-type-specifiers.md`.
+- Q: Resolutions for the original's gaps (proposed, no objection): dangling `auto` and stream
+  state carry-over are gone by construction (eager calls, no streams); `A a F` are floating;
+  `C S` (deprecated wide forms) are compile errors that say so; `+ # space` follow C semantics;
+  a repeated positional (`%1%`, `%1$s`) reuses the argument; an out-of-range index and mixing
+  positional with sequential are compile errors.
+- Q: Alignment flags in printf syntax? — A: Match the Python/`std::format` family: `^` center,
+  `=` internal, `>` kept as explicit right-align, `_` dropped. This deliberately changes the
+  original's meanings (`=` center, `_` internal) so `=` means the same in `_pfmt` and `_bfmt`.
