@@ -83,3 +83,8 @@ These are in the `stdplus` repo, not this one:
   `static_assert` diagnostic gets a one-file compile-fail test registered with CTest, passing only
   when compilation fails and stderr matches the expected message (`PASS_REGULAR_EXPRESSION`),
   under both g++ and clang++.
+- Q: How does a format string choose printf vs brace syntax? — A: A separate literal suffix per
+  syntax, each parsed by exactly one grammar: `"{:#04x}"_bfmt` for brace, `"0x%02X"_pfmt` for
+  printf. Autodetection breaks on JSON-with-printf and on `100%` in brace strings; mixing both in
+  one string would break each standard. `_fmt` is left alone because `std::` may claim it. Both
+  suffixes share the segment representation and conversion code; only the parsers differ.
