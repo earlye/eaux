@@ -64,3 +64,12 @@ These are in the `stdplus` repo, not this one:
 - `/home/earlye/Documents/gogs/earlye/stdplus/include/stdplus/strings/formattype/`: the
   original implementation.
 - `/home/earlye/Documents/gogs/earlye/stdplus/src/test/strings/test_format.cpp`: its tests.
+
+## Grill Log
+
+### 2026-10-26
+
+- Q: What grammar should the brace syntax use? — A: `std::format`'s replacement-field grammar
+  exactly: `{[arg-id][:[[fill]align][sign][#][0][width][.precision][type]]}`, with `{{`/`}}`
+  escapes. Deferred for now: nested dynamic width/precision (`{:{}}`), chrono/range specs, and
+  the `L` locale flag.
