@@ -29,6 +29,7 @@ enum class parse_error : std::uint8_t {
   printf_ascii_needs_s,
   printf_user_type_flags,
   printf_conflicting_alignment,
+  number_too_large,
   brace_unmatched_close,
   brace_unterminated,
   brace_mixed_indexing,

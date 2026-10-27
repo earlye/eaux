@@ -134,6 +134,8 @@ static_assert(brace_spec("8.").std_error == parse_error::std_spec_invalid);
 static_assert(brace_spec("Ld").std_error == parse_error::std_spec_locale);
 static_assert(brace_spec("?").std_error == parse_error::std_spec_debug);
 static_assert(brace_spec("dd").std_error == parse_error::std_spec_invalid);
+static_assert(brace_spec("99999999999").std_error == parse_error::number_too_large);
+static_assert(brace_spec(".1000001").std_error == parse_error::number_too_large);
 
 // Every error the parsers report. tests/fail checks the messages they produce.
 static_assert(error_of<syntax::printf>("abc %") == parse_error::printf_incomplete);
@@ -163,6 +165,11 @@ static_assert(error_of<syntax::brace>("{} {0}") == parse_error::brace_mixed_inde
 static_assert(error_of<syntax::brace>("{x}") == parse_error::brace_invalid_arg_id);
 static_assert(error_of<syntax::brace>("{01}") == parse_error::brace_invalid_arg_id);
 static_assert(error_of<syntax::brace>("{:{}}") == parse_error::brace_nested_field);
+static_assert(error_of<syntax::printf>("%1000001d") == parse_error::number_too_large);
+static_assert(error_of<syntax::printf>("%.99999999999f") == parse_error::number_too_large);
+static_assert(error_of<syntax::printf>("%1000001$d") == parse_error::number_too_large);
+static_assert(error_of<syntax::brace>("{99999999999}") == parse_error::number_too_large);
+static_assert(error_of<syntax::printf>("%1000000d") == parse_error::none);
 
 // Valid strings with the same characters.
 static_assert(error_of<syntax::printf>("%-12v %^8V %>4s") == parse_error::none);

@@ -35,6 +35,7 @@ constexpr bool format_string_error() {
   static_assert(Error != printf_user_type_flags,
                 "static_format: %v and %V take only width, precision and the alignment flags - ^ >");
   static_assert(Error != printf_conflicting_alignment, "static_format: conflicting alignment flags (- ^ = >)");
+  static_assert(Error != number_too_large, "static_format: width, precision or argument index above 1000000");
   static_assert(Error != brace_unmatched_close, "static_format: unmatched '}' in format string (write '}}' for a literal brace)");
   static_assert(Error != brace_unterminated, "static_format: replacement field has no closing '}'");
   static_assert(Error != brace_mixed_indexing,
@@ -116,6 +117,7 @@ template <std::size_t ArgId, char Type, class T, parse_error SpecError, bool Ari
 constexpr bool brace_builtin_argument() {
   using enum parse_error;
   static_assert(SpecError != std_spec_invalid, "static_format: invalid format spec for a built-in type");
+  static_assert(SpecError != number_too_large, "static_format: width, precision or argument index above 1000000");
   static_assert(SpecError != std_spec_locale, "static_format: the L (locale) option is not supported");
   static_assert(SpecError != std_spec_debug, "static_format: the ? (debug) presentation type is not supported");
   if constexpr (SpecError != none) {

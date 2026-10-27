@@ -11,14 +11,21 @@ namespace eaux::text::static_format::detail {
 
 constexpr bool is_digit(char c) noexcept { return c >= '0' && c <= '9'; }
 
-// Reads decimal digits at s[i...]; a value too large for any sane width saturates, which still
-// pads absurdly but cannot overflow.
-constexpr std::size_t read_number(std::string_view s, std::size_t& i) noexcept {
-  std::size_t value = 0;
+// The largest width, precision or argument index accepted. Anything larger is a typo that would
+// otherwise pad or allocate absurd amounts at run time.
+inline constexpr std::size_t max_number = 1'000'000;
+
+// Reads decimal digits at s[i...] into `value`; false when the number exceeds max_number.
+constexpr bool read_number(std::string_view s, std::size_t& i, std::size_t& value) noexcept {
+  value = 0;
+  bool fits = true;
   for (; i < s.size() && is_digit(s[i]); ++i) {
-    value = value > 100'000'000 ? value : value * 10 + static_cast<std::size_t>(s[i] - '0');
+    if (fits) {
+      value = value * 10 + static_cast<std::size_t>(s[i] - '0');
+      fits = value <= max_number;
+    }
   }
-  return value;
+  return fits;
 }
 
 // The standard format spec, [format.string.std]:
@@ -53,11 +60,11 @@ constexpr parse_error parse_std_spec(std::string_view s, field_spec& spec) noexc
   }
   if (i < s.size() && s[i] == '#') spec.alternate = true, ++i;
   if (i < s.size() && s[i] == '0') spec.zero = true, ++i;
-  if (i < s.size() && is_digit(s[i])) spec.width = read_number(s, i);
+  if (i < s.size() && is_digit(s[i]) && !read_number(s, i, spec.width)) return parse_error::number_too_large;
   if (i < s.size() && s[i] == '.') {
     ++i;
     if (i == s.size() || !is_digit(s[i])) return parse_error::std_spec_invalid;
-    spec.precision = read_number(s, i);
+    if (!read_number(s, i, spec.precision)) return parse_error::number_too_large;
   }
   if (i < s.size() && s[i] == 'L') return parse_error::std_spec_locale;
   if (i < s.size()) {
@@ -151,8 +158,10 @@ constexpr parse_result parse_printf(std::string_view s, Visitor& visitor) noexce
     field.spec.syn = syntax::printf;
     std::size_t index = 0;  // 1-based when positional
     std::size_t digits_end = i;
-    std::size_t const number = read_number(s, digits_end);
+    std::size_t number = 0;
+    bool const number_fits = read_number(s, digits_end, number);
     if (digits_end > i && digits_end < s.size() && (s[digits_end] == '%' || s[digits_end] == '$')) {
+      if (!number_fits) return fail(parse_error::number_too_large, start);
       if (number == 0) return fail(parse_error::printf_index_zero, start);
       index = number;
       bool const boost = s[digits_end] == '%';
@@ -194,11 +203,11 @@ constexpr parse_result parse_printf(std::string_view s, Visitor& visitor) noexce
       ++i;
     }
     if (i < s.size() && s[i] == '*') return fail(parse_error::printf_dynamic_width, start);
-    spec.width = read_number(s, i);
+    if (!read_number(s, i, spec.width)) return fail(parse_error::number_too_large, start);
     if (i < s.size() && s[i] == '.') {
       ++i;
       if (i < s.size() && s[i] == '*') return fail(parse_error::printf_dynamic_width, start);
-      spec.precision = read_number(s, i);
+      if (!read_number(s, i, spec.precision)) return fail(parse_error::number_too_large, start);
     }
     skip_length(i);
     bool braced = false;
@@ -292,7 +301,7 @@ constexpr parse_result parse_brace(std::string_view s, Visitor& visitor) noexcep
     if (i == s.size()) return fail(parse_error::brace_unterminated, start);
     if (is_digit(s[i])) {
       if (s[i] == '0' && i + 1 < s.size() && is_digit(s[i + 1])) return fail(parse_error::brace_invalid_arg_id, start);
-      field.arg = read_number(s, i);
+      if (!read_number(s, i, field.arg)) return fail(parse_error::number_too_large, start);
       manual = true;
     } else {
       field.arg = next_automatic++;
