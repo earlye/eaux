@@ -188,32 +188,18 @@ void write_integer(Sink& sink, T value) {
 template <class F>
 using to_chars_float = std::conditional_t<std::is_same_v<F, long double> && sizeof(long double) == sizeof(double), double, F>;
 
-// A buffer for one floating-point conversion: on the stack unless a large precision or a huge
-// %f value needs more.
-class float_buffer {
- public:
-  explicit float_buffer(std::size_t needed) {
-    if (needed > sizeof small_) {
-      large_.resize(needed);
-      data_ = large_.data();
-      capacity_ = needed;
-    }
-  }
-  char* data() noexcept { return data_; }
-  std::size_t capacity() const noexcept { return capacity_; }
-
- private:
-  char small_[128];
-  std::string large_;
-  char* data_ = small_;
-  std::size_t capacity_ = sizeof small_;
-};
-
+// Returns the length written, or 0 when the buffer is too small (a conversion is never empty).
 template <class F>
 std::size_t float_chars(char* first, std::size_t capacity, F value, std::chars_format format, std::size_t precision) {
   auto const v = static_cast<to_chars_float<F>>(value);
   auto const r = precision == no_precision ? std::to_chars(first, first + capacity, v, format)
                                            : std::to_chars(first, first + capacity, v, format, static_cast<int>(precision));
+  return r.ec == std::errc{} ? static_cast<std::size_t>(r.ptr - first) : 0;
+}
+
+template <class F>
+std::size_t shortest_chars(char* first, std::size_t capacity, F value) {
+  auto const r = std::to_chars(first, first + capacity, static_cast<to_chars_float<F>>(value));
   return r.ec == std::errc{} ? static_cast<std::size_t>(r.ptr - first) : 0;
 }
 
@@ -264,35 +250,47 @@ void write_float(Sink& sink, F value) {
     prefix[prefix_size++] = '0', prefix[prefix_size++] = upper ? 'X' : 'x';
   }
 
-  constexpr std::size_t integral_digits = std::numeric_limits<F>::max_exponent10 + 2;
-  float_buffer buffer((shortest ? 0 : precision) + integral_digits + 16);
-  char* const out = buffer.data();
-  std::size_t size;
-  if constexpr (shortest && conversion == 0) {
-    auto const v = static_cast<to_chars_float<F>>(magnitude);
-    size = static_cast<std::size_t>(std::to_chars(out, out + buffer.capacity(), v).ptr - out);
-  } else if constexpr (Spec.alternate && format == std::chars_format::general) {
-    // %#g keeps trailing zeros, which to_chars' general format strips: pick %e or %f by C's rule
-    // and render that with the matching precision.
-    std::size_t const p = precision == 0 ? 1 : precision;
-    size = float_chars(out, buffer.capacity(), magnitude, std::chars_format::scientific, p - 1);
-    int const x = exponent_of(std::string_view(out, size));
-    if (static_cast<long long>(p) > x && x >= -4) {
-      size = float_chars(out, buffer.capacity(), magnitude, std::chars_format::fixed,
-                         static_cast<std::size_t>(static_cast<long long>(p) - 1 - x));
+  // Each attempt leaves one byte spare for the decimal point that # may insert.
+  auto const render = [&](char* out, std::size_t capacity) -> std::size_t {
+    std::size_t size;
+    if constexpr (shortest && conversion == 0) {
+      size = shortest_chars(out, capacity, magnitude);
+    } else if constexpr (Spec.alternate && format == std::chars_format::general) {
+      // %#g keeps trailing zeros, which to_chars' general format strips: pick %e or %f by C's
+      // rule and render that with the matching precision.
+      std::size_t const p = precision == 0 ? 1 : precision;
+      size = float_chars(out, capacity, magnitude, std::chars_format::scientific, p - 1);
+      if (size == 0) return 0;
+      int const x = exponent_of(std::string_view(out, size));
+      if (static_cast<long long>(p) > x && x >= -4) {
+        size = float_chars(out, capacity, magnitude, std::chars_format::fixed,
+                           static_cast<std::size_t>(static_cast<long long>(p) - 1 - x));
+      }
+    } else {
+      size = float_chars(out, capacity, magnitude, format, precision);
     }
-  } else {
-    size = float_chars(out, buffer.capacity(), magnitude, format, precision);
-  }
+    if constexpr (Spec.alternate) {
+      std::string_view const rendered(out, size);
+      if (size != 0 && rendered.find('.') == std::string_view::npos) {
+        auto const exponent = std::min(rendered.find(format == std::chars_format::hex ? 'p' : 'e'), size);
+        std::copy_backward(out + exponent, out + size, out + size + 1);
+        out[exponent] = '.';
+        ++size;
+      }
+    }
+    return size;
+  };
 
-  if constexpr (Spec.alternate) {
-    std::string_view const rendered(out, size);
-    if (rendered.find('.') == std::string_view::npos) {
-      auto const exponent = std::min(rendered.find(format == std::chars_format::hex ? 'p' : 'e'), size);
-      std::copy_backward(out + exponent, out + size, out + size + 1);
-      out[exponent] = '.';
-      ++size;
-    }
+  // Almost every conversion fits on the stack; only a large precision or a huge %f value
+  // (up to max_exponent10 integral digits) needs the heap.
+  char small[128];
+  char* out = small;
+  std::size_t size = render(small, sizeof small - 1);
+  std::string large;
+  if (size == 0) {
+    large.resize((shortest ? 0 : precision) + std::numeric_limits<F>::max_exponent10 + 32);
+    out = large.data();
+    size = render(out, large.size() - 1);
   }
   if constexpr (upper) to_upper(out, out + size);
 

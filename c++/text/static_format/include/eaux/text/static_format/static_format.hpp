@@ -66,9 +66,8 @@ class compiled_format {
   template <class... Args>
   std::string operator()(Args const&... args) const {
     detail::string_sink sink;
-    sink.out.reserve(info.text_size + 16 * sizeof...(Args));
     render(sink, args...);
-    return std::move(sink.out);
+    return std::move(sink).take();
   }
 
   // Writes to `out` and returns the iterator past the output.

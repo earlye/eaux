@@ -41,13 +41,46 @@ struct iterator_sink {
   void fill(char c, std::size_t n) { out = std::fill_n(std::move(out), n, c); }
 };
 
-struct string_sink {
+// Builds a std::string through a stack buffer, so short results are constructed once at their
+// final size (often within the small-string buffer) and long ones grow geometrically.
+class string_sink {
+ public:
   static constexpr bool truncating = false;
-  std::string out;
 
-  void put(std::string_view s, text = text::ascii) { out.append(s); }
-  void put(char c) { out.push_back(c); }
-  void fill(char c, std::size_t n) { out.append(n, c); }
+  void put(std::string_view s, text = text::ascii) {
+    if (!spilled_ && s.size() <= sizeof buffer_ - size_) {
+      if (!s.empty()) std::memcpy(buffer_ + size_, s.data(), s.size());
+      size_ += s.size();
+    } else {
+      spill().append(s);
+    }
+  }
+  void put(char c) { put(std::string_view(&c, 1)); }
+  void fill(char c, std::size_t n) {
+    if (!spilled_ && n <= sizeof buffer_ - size_) {
+      if (n) std::memset(buffer_ + size_, c, n);
+      size_ += n;
+    } else {
+      spill().append(n, c);
+    }
+  }
+
+  std::string take() && { return spilled_ ? std::move(heap_) : std::string(buffer_, size_); }
+
+ private:
+  std::string& spill() {
+    if (!spilled_) {
+      heap_.reserve(2 * sizeof buffer_);
+      heap_.assign(buffer_, size_);
+      spilled_ = true;
+    }
+    return heap_;
+  }
+
+  char buffer_[512];
+  std::size_t size_ = 0;
+  bool spilled_ = false;
+  std::string heap_;
 };
 
 // Counts every byte but writes only whole grapheme clusters while they fit; after the first
