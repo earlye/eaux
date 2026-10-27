@@ -65,3 +65,11 @@ Trade-offs:
   `FetchContent`).
 - `c++/text/static_format/docs/adr/0002-utf8-width-and-truncation.md`: the text width rules and
   the `{:c}` difference that option B must keep.
+
+## Grill Log
+
+### 2026-10-27
+
+- Q: Is the ~10 ns `%8.3f` gap worth closing, given that only option B (fmt) closes it as
+  written? — A: Yes. Scientific output writes thousands of floats, so the gap adds up. How to
+  close it (fmt dependency, optional backend, or our own implementation) is still open.
