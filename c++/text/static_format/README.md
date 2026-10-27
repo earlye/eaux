@@ -49,6 +49,8 @@ auto [out, size] = "%-12s"_pfmt.to_n(buffer, 8, label);     // size: the untrunc
 - A braced spec before the conversion carries extra keys. The only built-in key is `ascii`:
   `%{ascii}s` requires an `ascii_string_view` argument. For `%V` the braces hold the user
   formatter's spec, e.g. `%-12{.3;kN}V`.
+- `%c` writes a `char16_t`, `char32_t` or `wchar_t` as UTF-8; a surrogate or a value above
+  U+10FFFF becomes U+FFFD.
 - `%C`, `%S`, `%n` and `*` widths are compile errors.
 
 ## Brace syntax

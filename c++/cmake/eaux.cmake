@@ -36,26 +36,28 @@ function(eaux_doctest name)
 endfunction()
 
 # eaux_compile_fail_tests(<prefix> <dir> LIBRARIES ...): every <dir>/*.cpp must fail to compile
-# with output matching the regex on its `// expect: <regex>` line. Each file is an
-# EXCLUDE_FROM_ALL object library that its CTest case builds; the build tool can't run
-# concurrently in one build tree, hence the resource lock.
+# with output matching each of its `// expect: <regex>` lines (see check_compile_fail.cmake).
+# Each file is an EXCLUDE_FROM_ALL object library that its CTest case builds; the build tool
+# can't run concurrently in one build tree, hence the resource lock.
 function(eaux_compile_fail_tests prefix dir)
   cmake_parse_arguments(PARSE_ARGV 2 arg "" "" "LIBRARIES")
   file(GLOB sources CONFIGURE_DEPENDS ${dir}/*.cpp)
+  if(NOT sources)
+    message(FATAL_ERROR "${dir}: no compile-fail tests found")
+  endif()
   foreach(source IN LISTS sources)
     get_filename_component(stem ${source} NAME_WE)
     file(STRINGS ${source} expect REGEX "^// expect: " LIMIT_COUNT 1)
     if(NOT expect)
       message(FATAL_ERROR "${source}: missing `// expect: <regex>` line")
     endif()
-    string(REGEX REPLACE "^// expect: " "" expect "${expect}")
     set(target ${prefix}_fail_${stem})
     add_library(${target} OBJECT EXCLUDE_FROM_ALL ${source})
     target_link_libraries(${target} PRIVATE ${arg_LIBRARIES})
     add_test(NAME ${prefix}.fail.${stem}
-      COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${target} --config $<CONFIG>)
+      COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${CMAKE_BINARY_DIR} -DTARGET=${target} -DCONFIG=$<CONFIG>
+        -DSOURCE=${source} -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/check_compile_fail.cmake)
     set_tests_properties(${prefix}.fail.${stem} PROPERTIES
-      PASS_REGULAR_EXPRESSION "${expect}"
       RESOURCE_LOCK eaux_build_tree
       LABELS compile-fail)
   endforeach()

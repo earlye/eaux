@@ -125,6 +125,9 @@ TEST_CASE("characters, strings and pointers") {
   CHECK("%c%c%c"_pfmt(static_cast<signed char>('a'), static_cast<unsigned char>('b'), u8'c') == "abc");
   CHECK("%c|%c|%c"_pfmt(U'\u00E9', u'\u4E2D', U'\U0001F600') == "\u00E9|\u4E2D|\U0001F600");
   CHECK("%c"_pfmt(L'w') == "w");
+  CHECK("[%3c]"_pfmt(U'\u4E2D') == "[ \u4E2D]");  // a wide character takes two columns
+  // Values that are not Unicode scalar values become U+FFFD.
+  CHECK("%c|%c"_pfmt(char32_t{0xD800}, char32_t{0x110000}) == "\uFFFD|\uFFFD");
   CHECK_PRINTF("%s|%8s|%-8s|%.2s|%8.2s|%-8.2s|%.0s|", "hello", "hello", "hello", "hello", "hello", "hello", "hello");
 
   char const* null = nullptr;

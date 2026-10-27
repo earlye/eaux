@@ -4,7 +4,9 @@
 
 #include <charconv>
 #include <format>
+#include <locale>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -32,6 +34,17 @@ struct force {
 
 // Has both formatters, to show which one each route picks.
 struct both {};
+
+// Writes a number through operator<<, where a stream's locale could group its digits.
+struct count {
+  friend std::ostream& operator<<(std::ostream& os, count) { return os << 1234567; }
+};
+
+// Groups thousands with commas.
+struct grouping : std::numpunct<char> {
+  char do_thousands_sep() const override { return ','; }
+  std::string do_grouping() const override { return "\3"; }
+};
 
 }  // namespace demo
 
@@ -119,4 +132,15 @@ TEST_CASE("brace fields on user types try static_format, then std, then operator
   CHECK("{}|{:>10}"_bfmt(demo::point{1, 2}, demo::point{3, 4}) == "(1, 2)|    (3, 4)");
   CHECK("{}"_bfmt(demo::tag{"t"}) == "<t>");
   CHECK("%1%"_pfmt(demo::tag{"t"}) == "<t>");
+}
+
+TEST_CASE("operator<< output stays \"C\"-locale under a grouping global locale") {
+  auto const previous = std::locale::global(std::locale(std::locale::classic(), new demo::grouping));
+  std::ostringstream probe;
+  probe << 1234567;
+  CHECK(probe.str() == "1,234,567");  // the global locale really groups
+  CHECK("%v"_pfmt(demo::count{}) == "1234567");
+  CHECK("{}"_bfmt(demo::count{}) == "1234567");
+  CHECK("%1%"_pfmt(demo::count{}) == "1234567");
+  std::locale::global(previous);
 }
