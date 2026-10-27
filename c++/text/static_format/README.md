@@ -119,14 +119,13 @@ CMake Release (`-O3`), libstdc++ 15, fmt 12.2.0, Google Benchmark 1.10.0:
 
 Where it loses to `FMT_COMPILE`:
 
-- A lone floating-point conversion is 20-50% slower, and so is the short mixed line, which
-  contains one. static_format converts with
-  `std::to_chars(value, fixed, precision)`, and libstdc++'s implementation of that is slower
-  than fmt's own algorithm. The cost is the conversion, not the formatting around it.
+- A lone floating-point conversion is 20-50% slower, and the short mixed line, which contains
+  one, 5-28% slower. static_format converts with `std::to_chars(value, fixed, precision)`, and
+  libstdc++'s implementation of that is slower than fmt's own algorithm.
 - For a tiny result returned as `std::string` (`0x%02X`), static_format takes 30-38 ns against
   fmt's 16-20.
 
 It is ahead on integers, on the 30-argument row, and on the mixed line returned as
-`std::string`.
-The `ascii_string_view` row is no faster than the plain one,
-within noise: scanning two 12-byte labels for non-ASCII bytes costs almost nothing.
+`std::string` (except `_pfmt` under clang, 169 ns against 166). The `ascii_string_view` row is
+no faster than the plain one, within noise: scanning two 12-byte labels for non-ASCII bytes
+costs almost nothing.
