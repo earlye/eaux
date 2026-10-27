@@ -1,6 +1,6 @@
 // expect: %d and %i need an integral argument
 // expect: ArgNumber = 2|printf_argument<2
-// expect: double
+// expect: AsciiOnly = [a-z]+; T = double|printf_argument<2[^>]*, *double>
 #include <eaux/text/static_format/static_format.hpp>
 
 using namespace eaux::text::static_format::literals;
