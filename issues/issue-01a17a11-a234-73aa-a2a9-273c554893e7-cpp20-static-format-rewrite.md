@@ -126,3 +126,14 @@ These are in the `stdplus` repo, not this one:
 - Q: Alignment flags in printf syntax? — A: Match the Python/`std::format` family: `^` center,
   `=` internal, `>` kept as explicit right-align, `_` dropped. This deliberately changes the
   original's meanings (`=` center, `_` internal) so `=` means the same in `_pfmt` and `_bfmt`.
+- Q: Language standard, compilers and platforms? — A: C++23, not C++20. Only the latest
+  compilers matter; there is no documented version floor. CI mirrors `rust.yml`'s matrix in four
+  jobs: ubuntu/g++ and ubuntu/clang++ (newest on the runner, pinned by name), macOS/Apple clang,
+  and windows/MSVC (CMake `CXX_STANDARD 23`; `/std:c++23preview` until VS 18.12 / MSVC 14.52 ships
+  the stable `/std:c++23`, expected November 2026). A language or library feature is usable only if
+  all four jobs compile it; a lacking platform means avoiding the feature, not dropping the
+  platform. Early accepts many commits chasing compiler quirks in exchange for free CI coverage.
+  A 2026-10-26 check found `if consteval`, `constexpr` integer `to_chars`, `std::unreachable`,
+  `std::expected`, float `to_chars` with precision and class-type NTTPs available on all current
+  runners. Clang doesn't bump `__cpp_nontype_template_args`, so don't gate on it. Exercise
+  `fixed_string` on all four jobs from the first commit, since older MSVC reportedly had ICEs with it.
