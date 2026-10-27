@@ -37,24 +37,25 @@ endfunction()
 
 # eaux_compile_fail_tests(<prefix> <dir> LIBRARIES ...): every <dir>/*.cpp must fail to compile
 # with output matching each of its `// expect: <regex>` lines (see check_compile_fail.cmake), and
-# no two file names in <dir> may differ only by case. Each file is an EXCLUDE_FROM_ALL object
-# library that its CTest case builds; the build tool can't run concurrently in one build tree,
-# hence the resource lock.
+# no two files in <dir> may share a name up to the first `.` when case is ignored. Each file is an
+# EXCLUDE_FROM_ALL object library that its CTest case builds; the build tool can't run
+# concurrently in one build tree, hence the resource lock.
 function(eaux_compile_fail_tests prefix dir)
   cmake_parse_arguments(PARSE_ARGV 2 arg "" "" "LIBRARIES")
   file(GLOB sources CONFIGURE_DEPENDS ${dir}/*.cpp)
   if(NOT sources)
     message(FATAL_ERROR "${dir}: no compile-fail tests found")
   endif()
-  # Test names that differ only by case collide on case-insensitive filesystems (macOS, Windows):
-  # the files at checkout, and the target and build-directory names made from their stems. Only a
-  # case-sensitive checkout (such as the Linux CI legs) has both files, so that's where this fires.
+  # Files whose names up to the first `.` match when case is ignored collide on case-insensitive
+  # filesystems (macOS, Windows): the files at checkout, and the target and build-directory names
+  # made from those names. Only a case-sensitive checkout (such as the Linux CI legs) has both
+  # files, so that's where this fires.
   foreach(source IN LISTS sources)
     get_filename_component(stem ${source} NAME_WE)
     string(TOLOWER ${stem} lower)
     if(DEFINED seen_${lower})
-      message(FATAL_ERROR "${source} and ${seen_${lower}}: names match when case is ignored, "
-        "which breaks on case-insensitive filesystems; rename one of them")
+      message(FATAL_ERROR "${source} and ${seen_${lower}}: names up to the first `.` match "
+        "when case is ignored, which breaks on case-insensitive filesystems; rename one of them")
     endif()
     set(seen_${lower} ${source})
   endforeach()
