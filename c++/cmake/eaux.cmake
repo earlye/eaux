@@ -46,10 +46,10 @@ function(eaux_compile_fail_tests prefix dir)
   if(NOT sources)
     message(FATAL_ERROR "${dir}: no compile-fail tests found")
   endif()
-  # Files whose names up to the first `.` match when case is ignored collide on case-insensitive
-  # filesystems (macOS, Windows): the files at checkout, and the target and build-directory names
-  # made from those names. Only a case-sensitive checkout (such as the Linux CI legs) has both
-  # files, so that's where this fires.
+  # Names up to the first `.` become target and build-directory names, which collide on
+  # case-insensitive filesystems (macOS, Windows) when they match ignoring case. Files whose names
+  # differ only by case also overwrite each other at checkout there, so only a case-sensitive
+  # checkout (such as the Linux CI legs) has both files and can catch it.
   foreach(source IN LISTS sources)
     get_filename_component(stem ${source} NAME_WE)
     string(TOLOWER ${stem} lower)
