@@ -28,3 +28,4 @@ endif()
 
 add_subdirectory(text/ascii)
 add_subdirectory(text/unicode)
+add_subdirectory(text/static_format)
