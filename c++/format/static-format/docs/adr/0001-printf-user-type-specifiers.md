@@ -20,3 +20,7 @@ text. The extension leaves standard printf strings untouched.
 `_bfmt` reaches the same formatters without an explicit choice. For `{:spec}` on a user type it
 tries `static_format::formatter<T>`, then `std::formatter<T>`, then `operator<<` (empty spec
 only). In printf syntax the letter makes that choice, so the asymmetry is deliberate.
+
+The braced spec is not limited to `%V`: any built-in specifier may take one, and unknown keys are
+compile errors. The first key is `ascii` on `%s` (`%{ascii}s`), which requires the argument's type
+to be `static_format::ascii_string_view`. See ADR 0002.
