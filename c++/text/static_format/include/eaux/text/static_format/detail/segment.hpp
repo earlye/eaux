@@ -63,10 +63,19 @@ struct field_spec {
   std::size_t width = 0;  // 0: no width
   std::size_t precision = no_precision;
   bool ascii_only = false;  // %{ascii}s
-  std::size_t raw_begin = 0;  // spec text in the source string: after ':' (brace) or inside {} (printf)
+  // The spec text in the source string: after ':' (brace) or inside {} (printf). compiled_format
+  // zeroes these before passing the spec as a template argument, so identical specs at different
+  // offsets share one writer instantiation.
+  std::size_t raw_begin = 0;
   std::size_t raw_size = 0;
   parse_error std_error = parse_error::none;  // brace only: the raw text read as a standard spec
 };
+
+constexpr field_spec without_offsets(field_spec spec) noexcept {
+  spec.raw_begin = 0;
+  spec.raw_size = 0;
+  return spec;
+}
 
 enum class segment_kind : std::uint8_t { literal, argument };
 

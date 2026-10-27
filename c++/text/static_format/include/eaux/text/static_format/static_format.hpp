@@ -103,7 +103,8 @@ class compiled_format {
       sink.put(std::string_view(parsed.text + seg.begin, seg.size));
     } else {
       using T = detail::type_at<seg.arg, Args...>;
-      detail::write_argument<seg.spec, seg.arg, detail::substring<S, seg.spec.raw_begin, seg.spec.raw_size>()>(
+      detail::write_argument<detail::without_offsets(seg.spec), seg.arg,
+                             detail::substring<S, seg.spec.raw_begin, seg.spec.raw_size>()>(
           sink, *static_cast<T const*>(pointers[seg.arg]));
     }
   }
