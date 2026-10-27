@@ -146,3 +146,36 @@ It is ahead in every other case: integers into a buffer, the 30-argument row bot
 mixed line returned as `std::string`. The `ascii_string_view` row is no faster than the plain
 one beyond noise (at most 2%): scanning two 12-byte labels for non-ASCII bytes costs almost
 nothing.
+
+The same on an Apple M4 Pro, macOS 15 (Darwin 24.6), CMake Release, Apple clang 17.0 with its
+libc++ 20.1 and Homebrew clang 22.1 with libc++ 22.1, same fmt and Google Benchmark. macOS
+cannot pin a process to a core, so these runs are unpinned. Commit
+`b4862f2fa7d840a8e96e63cd749903588b31129a`:
+
+| case | snprintf | std::format_to | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
+|---|---:|---:|---:|---:|---:|
+| `0x%02X`, Apple clang 17.0 | 26.6 | 25.2 | 6.5 | **5.3** | 5.5 |
+| `0x%02X`, clang 22.1 | 27.2 | 27.3 | **6.6** | 9.9 | 9.7 |
+| `%8.3f`, Apple clang | 83.0 | 47.8 | **22.0** | 22.8 | 22.3 |
+| `%8.3f`, clang | 85.9 | 48.2 | 21.7 | **20.8** | 21.4 |
+| short mixed line, Apple clang | 146 | 106 | **32.0** | 32.9 | 32.8 |
+| short mixed line, clang | 152 | 111 | 33.2 | **33.2** | 33.8 |
+| 30-argument row, Apple clang | 2153 | 1486 | 1193 | **693** | 696 |
+| 30-argument row, clang | 2240 | 1511 | 1193 | **707** | 714 |
+| row, `ascii_string_view` labels, Apple clang | | | | 693 | 687 |
+| row, `ascii_string_view` labels, clang | | | | 691 | 717 |
+
+| returning `std::string` | std::format | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
+|---|---:|---:|---:|---:|
+| `0x%02X`, Apple clang | 27.0 | **10.3** | 14.4 | 15.5 |
+| `0x%02X`, clang | 29.1 | 9.9 | **9.9** | 10.0 |
+| short mixed line, Apple clang | 121 | 82.7 | **55.5** | 56.4 |
+| short mixed line, clang | 127 | 82.5 | 56.1 | **55.8** |
+| 30-argument row, Apple clang | 1592 | 1659 | **823** | 824 |
+| 30-argument row, clang | 1615 | 1619 | **828** | 829 |
+
+Here `%8.3f` and the short mixed line are within 4% of `FMT_COMPILE` either way. It loses on the
+tiny `0x%02X`: about 50% (3 ns) slower into a buffer under clang 22.1, and about 40% (4 ns)
+slower returned as `std::string` under Apple clang; with the other compiler it is level or
+ahead in each. The 30-argument row is 40-42% faster into a buffer and about half the time
+returned as `std::string`, and the mixed line returned as `std::string` about a third faster.
