@@ -102,8 +102,6 @@ void write_brace_builtin(Sink& sink, T const& value) {
   if constexpr (boolean<T>) {
     if constexpr (type == 0 || type == 's') {
       write_text<Spec, true>(sink, value ? "true" : "false");
-    } else if constexpr (type == 'c') {
-      write_char<Spec>(sink, static_cast<char>(value));
     } else {
       write_integer<Spec>(sink, static_cast<unsigned>(value));
     }

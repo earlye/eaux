@@ -32,7 +32,7 @@ TEST_CASE("integers match std::format") {
   CHECK_BRACE("{}|{}|{}|{}", INT_MIN, INT_MAX, LLONG_MIN, ULLONG_MAX);
   CHECK_BRACE("{}|{}|{:x}", static_cast<signed char>(-5), static_cast<unsigned char>(200), std::uint8_t{255});
   CHECK_BRACE("{:<05}|{:>06}|{:#>06x}", 42, 42, 255);
-  CHECK_BRACE("{:c}", 65);
+  CHECK_BRACE("{:c}|{:-}|{:-}", 65, 5, -5);
 }
 
 TEST_CASE("bool and char match std::format") {

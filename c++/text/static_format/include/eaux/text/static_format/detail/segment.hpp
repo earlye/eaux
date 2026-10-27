@@ -10,7 +10,9 @@ enum class syntax : std::uint8_t { printf, brace };
 
 enum class align : std::uint8_t { none, left, right, center, internal };
 
-enum class sign : std::uint8_t { none, plus, space };
+// minus is the explicit '-' of a brace spec: it formats like none, but std::format allows it
+// only where a sign could appear.
+enum class sign : std::uint8_t { none, minus, plus, space };
 
 // Every way a format string can be rejected. Parse errors are reported where the literal is
 // written; std_spec_* errors in a brace field are reported where an argument of a built-in type

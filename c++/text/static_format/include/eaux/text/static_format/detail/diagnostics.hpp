@@ -124,7 +124,7 @@ constexpr bool brace_builtin_argument() {
     return false;
   } else {
     constexpr auto allowed = []() -> std::string_view {
-      if constexpr (boolean<T>) return "sbBcdoxX";
+      if constexpr (boolean<T>) return "sbBdoxX";
       else if constexpr (brace_char<T>) return "cbBdoxX";
       else if constexpr (brace_integer<T>) return "bBcdoxX";
       else if constexpr (std::floating_point<T>) return "aAeEfFgG";

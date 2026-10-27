@@ -55,7 +55,7 @@ constexpr parse_error parse_std_spec(std::string_view s, field_spec& spec) noexc
     }
   }
   if (i < s.size() && (s[i] == '+' || s[i] == '-' || s[i] == ' ')) {
-    spec.sign_mode = s[i] == '+' ? sign::plus : s[i] == ' ' ? sign::space : sign::none;
+    spec.sign_mode = s[i] == '+' ? sign::plus : s[i] == ' ' ? sign::space : sign::minus;
     ++i;
   }
   if (i < s.size() && s[i] == '#') spec.alternate = true, ++i;
