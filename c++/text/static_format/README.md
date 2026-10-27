@@ -105,34 +105,37 @@ fmt 12.2.0, Google Benchmark 1.10.0, measured with
 
 | case | snprintf | std::format_to | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
 |---|---:|---:|---:|---:|---:|
-| `0x%02X`, g++ 15.2 | 47.6 | 68.3 | 9.9 | 8.9 | **8.9** |
-| `0x%02X`, clang 21.1 | 46.3 | 55.8 | 12.6 | 6.1 | **6.0** |
-| `%8.3f`, g++ | 208 | 123 | **41.9** | 63.8 | 58.9 |
-| `%8.3f`, clang | 211 | 125 | **43.1** | 52.6 | 52.5 |
-| short mixed line, g++ | 314 | 265 | **59.0** | 80.9 | 89.3 |
-| short mixed line, clang | 303 | 230 | **62.1** | 66.3 | 67.6 |
-| 30-argument row, g++ | 6058 | 4014 | 2026 | 1818 | **1813** |
-| 30-argument row, clang | 5889 | 4099 | 2329 | **1546** | 1580 |
-| row, `ascii_string_view` labels, g++ | | | | 1804 | 1768 |
-| row, `ascii_string_view` labels, clang | | | | 1500 | 1570 |
+| `0x%02X`, g++ 15.2 | 45.2 | 65.8 | 9.7 | 8.8 | **8.8** |
+| `0x%02X`, clang 21.1 | 46.9 | 55.4 | 12.5 | **6.0** | **6.0** |
+| `%8.3f`, g++ | 211 | 120 | **41.7** | 53.5 | 51.9 |
+| `%8.3f`, clang | 210 | 125 | **43.3** | 52.1 | 52.2 |
+| short mixed line, g++ | 306 | 265 | **57.3** | 77.8 | 85.3 |
+| short mixed line, clang | 306 | 231 | **63.3** | 69.2 | 68.9 |
+| 30-argument row, g++ | 5835 | 3886 | 1931 | **1748** | 1756 |
+| 30-argument row, clang | 5952 | 4089 | 2238 | 1479 | **1476** |
+| row, `ascii_string_view` labels, g++ | | | | 1742 | 1747 |
+| row, `ascii_string_view` labels, clang | | | | 1504 | 1500 |
 
 | returning `std::string` | std::format | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
 |---|---:|---:|---:|---:|
-| `0x%02X`, g++ | 79.7 | **16.2** | 30.6 | 30.5 |
-| `0x%02X`, clang | 64.1 | **19.3** | 34.8 | 35.1 |
-| short mixed line, g++ | 291 | 161 | **151** | **151** |
-| short mixed line, clang | 255 | 167 | 157 | **153** |
-| 30-argument row, g++ | 4294 | 2346 | 2282 | **2109** |
-| 30-argument row, clang | 4154 | 2794 | 2121 | **2081** |
+| `0x%02X`, g++ | 72.2 | 16.2 | 16.4 | **16.1** |
+| `0x%02X`, clang | 64.2 | **19.2** | 21.4 | 21.2 |
+| short mixed line, g++ | 282 | 155 | **107** | **107** |
+| short mixed line, clang | 257 | 168 | 110 | **107** |
+| 30-argument row, g++ | 3955 | 2215 | **1776** | 1806 |
+| 30-argument row, clang | 4184 | 2894 | 1659 | **1649** |
 
 Where it loses to `FMT_COMPILE`:
 
-- A lone `%8.3f` is 22-52% slower, and the short mixed line, which contains one, 7-51% slower.
-  static_format converts with `std::to_chars(value, fixed, precision)`, and libstdc++'s
-  implementation of that is slower than fmt's own algorithm.
-- A tiny result returned as `std::string` (`0x%02X`) takes 31-35 ns against fmt's 16-19.
+- A lone `%8.3f` is 20-28% slower, and the short mixed line into a buffer, which contains one,
+  9% slower under clang and 36-49% under g++. Most of the time is the conversion: libstdc++'s
+  `std::to_chars(value, fixed, 3)` alone takes about 40 ns here, against fmt's 31 ns (g++) and
+  42 ns (clang) for the whole field; static_format adds about 10 ns of its own, half of it the
+  width padding.
+- A tiny result returned as `std::string` (`0x%02X`) is level under g++ and about 2 ns (10%)
+  slower under clang.
 
 It is ahead in every other case: integers into a buffer, the 30-argument row both ways, and the
 mixed line returned as `std::string`. The `ascii_string_view` row is no faster than the plain
-one beyond noise (at most 3%): scanning two 12-byte labels for non-ASCII bytes costs almost
+one beyond noise (at most 2%): scanning two 12-byte labels for non-ASCII bytes costs almost
 nothing.

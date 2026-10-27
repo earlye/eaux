@@ -277,23 +277,24 @@ void write_float(Sink& sink, F value) {
     return size;
   };
 
-  // Almost every conversion fits on the stack; only a large precision or a huge %f value
-  // (up to max_exponent10 integral digits) needs the heap.
-  char small[128];
-  char* out = small;
-  std::size_t size = render(small, sizeof small - 1);
-  std::string large;
-  if (size == 0) {
-    large.resize((shortest ? 0 : precision) + std::numeric_limits<F>::max_exponent10 + 32);
-    out = large.data();
-    size = render(out, large.size() - 1);
-    assert(size != 0 && "the heap buffer holds any conversion: precision plus max_exponent10 integral digits");
-  }
-  if constexpr (upper) to_upper(out, out + size);
-
   constexpr bool zero_pad =
       printf ? Spec.zero && Spec.alignment != align::left && Spec.alignment != align::center : Spec.zero && Spec.alignment == align::none;
-  put_padded<Spec, align::right>(sink, sign, prefix, 0, std::string_view(out, size), size, zero_pad);
+  auto const finish = [&](char* out, std::size_t size) {
+    if constexpr (upper) to_upper(out, out + size);
+    put_padded<Spec, align::right>(sink, sign, prefix, 0, std::string_view(out, size), size, zero_pad);
+  };
+
+  // Almost every conversion fits on the stack; only a large precision or a huge %f value
+  // (up to max_exponent10 integral digits) needs the heap, and only then is a string built.
+  char small[128];
+  if (std::size_t const size = render(small, sizeof small - 1); size != 0) [[likely]] {
+    finish(small, size);
+  } else {
+    std::string large((shortest ? 0 : precision) + std::numeric_limits<F>::max_exponent10 + 32, '\0');
+    std::size_t const large_size = render(large.data(), large.size() - 1);
+    assert(large_size != 0 && "the heap buffer holds any conversion: precision plus max_exponent10 integral digits");
+    finish(large.data(), large_size);
+  }
 }
 
 template <field_spec Spec, class Sink>

@@ -103,3 +103,11 @@ TEST_CASE("formats are values usable many times") {
   for (int i = 0; i < 3; ++i) lines.push_back(row("r", i));
   CHECK(lines == std::vector<std::string>{"r   |  0", "r   |  1", "r   |  2"});
 }
+
+TEST_CASE("std::string results longer than the stack buffer") {
+  std::string const filled = "%600d|%s"_pfmt(7, "end");
+  CHECK(filled == std::string(599, ' ') + "7|end");
+  std::string const long_text(700, 'x');
+  std::string const appended = "<%s>%-520s|"_pfmt(long_text, "y");
+  CHECK(appended == "<" + long_text + ">y" + std::string(519, ' ') + "|");
+}

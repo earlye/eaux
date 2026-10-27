@@ -7,6 +7,14 @@
 #include <string>
 #include <string_view>
 
+// Keeps a rarely taken path out of line so the common path inlines at every call site; without
+// it g++ inlines string_sink's spill into each put and the std::string result costs ~60% more.
+#if defined(_MSC_VER) && !defined(__clang__)
+#define EAUX_STATIC_FORMAT_NOINLINE __declspec(noinline)
+#else
+#define EAUX_STATIC_FORMAT_NOINLINE [[gnu::noinline]]
+#endif
+
 // Sinks receive the formatted output in pieces.
 namespace eaux::text::static_format::detail {
 
@@ -33,26 +41,31 @@ struct iterator_sink {
   void fill(char c, std::size_t n) { out = std::fill_n(std::move(out), n, c); }
 };
 
-// Builds a std::string through a stack buffer, so short results are constructed once at their
-// final size (often within the small-string buffer) and long ones grow geometrically.
+// Builds a std::string through a stack buffer, so a result that fits is constructed once at its
+// final size (often within the small-string buffer) and only a longer one touches the heap. The
+// fast path is a bounds check and a memcpy, small enough to inline at every call; spilling to the
+// heap is out of line. A spilled sink marks its buffer full, so the fast path never runs again.
 class string_sink {
  public:
+  string_sink() = default;
+  string_sink(string_sink const&) = delete;
+  string_sink& operator=(string_sink const&) = delete;
 
   void put(std::string_view s) {
-    if (!spilled_ && s.size() <= sizeof buffer_ - size_) {
+    if (s.size() <= sizeof buffer_ - size_) [[likely]] {
       if (!s.empty()) std::memcpy(buffer_ + size_, s.data(), s.size());
       size_ += s.size();
     } else {
-      spill().append(s);
+      put_heap(s);
     }
   }
   void put(char c) { put(std::string_view(&c, 1)); }
   void fill(char c, std::size_t n) {
-    if (!spilled_ && n <= sizeof buffer_ - size_) {
+    if (n <= sizeof buffer_ - size_) [[likely]] {
       if (n) std::memset(buffer_ + size_, c, n);
       size_ += n;
     } else {
-      spill().append(n, c);
+      fill_heap(c, n);
     }
   }
 
@@ -60,11 +73,15 @@ class string_sink {
   std::string take() && { return spilled_ ? std::move(heap_) : std::string(buffer_, size_); }
 
  private:
+  EAUX_STATIC_FORMAT_NOINLINE void put_heap(std::string_view s) { spill().append(s); }
+  EAUX_STATIC_FORMAT_NOINLINE void fill_heap(char c, std::size_t n) { spill().append(n, c); }
+
   std::string& spill() {
     if (!spilled_) {
       heap_.reserve(2 * sizeof buffer_);
       heap_.assign(buffer_, size_);
       spilled_ = true;
+      size_ = sizeof buffer_;
     }
     return heap_;
   }
