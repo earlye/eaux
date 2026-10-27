@@ -105,8 +105,10 @@ order:
   - String precision never splits a grapheme.
   - `to_n` stops at a grapheme boundary.
 - How the text handling is implemented:
-  - Literal segments pick an ASCII or UTF-8 emitter at compile time. UTF-8 literals carry
-    precomputed grapheme boundaries.
+  - `to_n` formats the complete output into the stack-buffered sink, then copies the longest
+    prefix ending on a grapheme boundary, so a cluster spanning a literal and an argument is
+    never split. (Superseded the earlier plan of per-literal precomputed boundaries, which cut
+    such clusters.)
   - Runtime strings get a word-wise up-front scan for bytes >= 0x80. ASCII strings take the
     length-equals-width fast path, so there is no opt-out mode.
   - Malformed UTF-8 passes through.
