@@ -30,7 +30,7 @@ constexpr bool read_number(std::string_view s, std::size_t& i, std::size_t& valu
 
 // The standard format spec, [format.string.std]:
 //   [[fill]align][sign][#][0][width][.precision][type]
-// Nested replacement fields and L are rejected (deferred), as is the ? debug type.
+// Nested replacement fields, L and the ? debug type are rejected.
 constexpr parse_error parse_std_spec(std::string_view s, field_spec& spec) noexcept {
   auto const align_of = [](char c) {
     switch (c) {

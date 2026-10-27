@@ -15,8 +15,9 @@ enum class align : std::uint8_t { none, left, right, center, internal };
 enum class sign : std::uint8_t { none, minus, plus, space };
 
 // Every way a format string can be rejected. Parse errors are reported where the literal is
-// written; std_spec_* errors in a brace field are reported where an argument of a built-in type
-// meets that field, since a user type may give the same text its own meaning.
+// written. A brace field's std_spec_* errors, and number_too_large in its width or precision, are
+// reported where an argument of a built-in type meets that field, since a user type may give the
+// same text its own meaning.
 enum class parse_error : std::uint8_t {
   none,
   printf_incomplete,

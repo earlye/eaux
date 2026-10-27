@@ -30,8 +30,7 @@ jobs:
           - name: macos Apple clang
             os: macos-latest
             cmake_args: -DEAUX_WARNINGS_AS_ERRORS=ON
-          # /W4 /WX has not been run on MSVC yet: if this job fails on warnings, fix them or
-          # suppress each one with a comment saying why.
+          # MSVC warnings are errors too: fix a warning, or suppress it with a comment saying why.
           - name: windows MSVC
             os: windows-latest
             cmake_args: -DEAUX_WARNINGS_AS_ERRORS=ON

@@ -137,14 +137,20 @@ TEST_CASE("brace fields on user types try static_format, then std, then operator
 }
 
 TEST_CASE("operator<< output stays \"C\"-locale under a grouping global locale") {
-  auto const previous = std::locale::global(std::locale(std::locale::classic(), new demo::grouping));
+  // Restores the previous global locale however the test ends.
+  struct global_locale {
+    std::locale previous;
+    explicit global_locale(std::locale const& l) : previous(std::locale::global(l)) {}
+    ~global_locale() { std::locale::global(previous); }
+    global_locale(global_locale const&) = delete;
+    global_locale& operator=(global_locale const&) = delete;
+  } const installed(std::locale(std::locale::classic(), new demo::grouping));
   std::ostringstream probe;
   probe << 1234567;
   CHECK(probe.str() == "1,234,567");  // the global locale really groups
   CHECK("%v"_pfmt(demo::count{}) == "1234567");
   CHECK("{}"_bfmt(demo::count{}) == "1234567");
   CHECK("%1%"_pfmt(demo::count{}) == "1234567");
-  std::locale::global(previous);
 }
 
 TEST_CASE("chrono and range specs reach std::formatter") {

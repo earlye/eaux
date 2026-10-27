@@ -40,11 +40,11 @@ TEST_CASE("a 4 KB printf format string with 64 arguments") {
 // A table row: 64 fields of mixed kinds.
 #define FIELDS8 "{:>10.4f}|{:<6}|{:4d}|{:x}|{:>10.4f}|{:<6}|{:4d}|{:x}|"
 #define FIELDS64 FIELDS8 FIELDS8 FIELDS8 FIELDS8 FIELDS8 FIELDS8 FIELDS8 FIELDS8
-#define VALUES8 1.5, "ab", 3, 255u, -2.25, "σ", -7, 16u
+#define VALUES8 1.5, "ab", 3, 255u, -2.25, "\u03C3", -7, 16u
 #define VALUES64 VALUES8, VALUES8, VALUES8, VALUES8, VALUES8, VALUES8, VALUES8, VALUES8
 
 TEST_CASE("a brace format string with 64 arguments") {
   std::string expected;
-  for (int i = 0; i < 8; ++i) expected += "    1.5000|ab    |   3|ff|   -2.2500|σ     |  -7|10|";
+  for (int i = 0; i < 8; ++i) expected += "    1.5000|ab    |   3|ff|   -2.2500|\u03C3     |  -7|10|";
   CHECK(BFMT(FIELDS64)(VALUES64) == expected);
 }
