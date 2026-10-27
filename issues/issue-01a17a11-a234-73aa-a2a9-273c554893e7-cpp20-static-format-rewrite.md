@@ -37,7 +37,7 @@ and also boost-style `%N%`.
     `{[arg-id][:[[fill]align][sign][#][0][width][.precision][type]]}` with `{{`/`}}` escapes.
     Nested dynamic width/precision, chrono/range specs and `L` are deferred.
   - `"0x%02X"_pfmt` is printf syntax plus boost-style `%N%`.
-- The literals live in `static_format::literals`.
+- The literals live in `eaux::static_format::literals`.
 - Calls are eager:
   - `"..."_pfmt(a, b, ...)` returns `std::string`.
   - `.to(out_it, args...)` writes to an iterator.
@@ -60,10 +60,10 @@ and also boost-style `%N%`.
 | `u o x X` | any integral type; negatives are cast to unsigned, as printf does |
 | `f F e E g G a A` | floating-point types |
 | `c` | char types only (an `int` needs a cast) |
-| `s` | string-like: `char const*`, `std::string`, `std::string_view`, `static_format::ascii_string_view`; `%{ascii}s` requires the last |
+| `s` | string-like: `char const*`, `std::string`, `std::string_view`, `eaux::text::ascii_string_view`; `%{ascii}s` requires the last |
 | `p` | pointers |
 | `v` | a user type through `std::formatter<T>`, else `operator<<`, else an error naming both |
-| `V` | a user type through `static_format::formatter<T>`, with an optional compile-time-parsed spec placed before the letter: `%[N$][flags][width][.precision][{spec}]V` |
+| `V` | a user type through `eaux::static_format::formatter<T>`, with an optional compile-time-parsed spec placed before the letter: `%[N$][flags][width][.precision][{spec}]V` |
 
 Further printf rules:
 
@@ -83,11 +83,11 @@ Further printf rules:
 The brace side follows `std::format`'s type rules. For `{:spec}` on a user type it tries, in
 order:
 
-1. `static_format::formatter<T>`
+1. `eaux::static_format::formatter<T>`
 2. `std::formatter<T>`
 3. `operator<<`, only when the spec is empty
 
-`static_format::formatter<T>` provides:
+`eaux::static_format::formatter<T>` provides:
 
 - `static constexpr Spec parse(std::string_view)`, where `Spec` is a structural type and an
   invalid spec fails the build
@@ -108,8 +108,9 @@ order:
   - Runtime strings get a word-wise up-front scan for bytes >= 0x80. ASCII strings take the
     length-equals-width fast path, so there is no opt-out mode.
   - Malformed UTF-8 passes through.
-  - `static_format::ascii_string_view` validates once at construction: `consteval` from
-    `"…"_ascii`, or `ascii_string_view::from(sv)` returning
+  - `eaux::text::ascii_string_view` lives in its own package (see below) and validates once
+    at construction: `consteval` from `"…"_ascii` (in `eaux::text::literals`), or
+    `ascii_string_view::from(sv)` returning
     `std::expected<ascii_string_view, std::size_t>` (offset of the first byte >= 0x80).
     Formatting picks the ASCII emitter for it by type, with no scan, in both syntaxes.
   - `%{ascii}s` is a compile-time requirement on the argument's type, not a runtime refusal, so
@@ -123,9 +124,14 @@ order:
 
 - **Language and layout:**
   - C++23.
-  - The library is a header-only CMake `INTERFACE` target.
-  - The single include is `include/static_format/static_format.hpp`, with internals under
-    `detail/`.
+  - Everything in the C++ tree lives under the `eaux::` umbrella namespace, one sub-namespace
+    per component. See `c++/docs/adr/0001-eaux-umbrella-and-text-package.md`.
+  - `c++/text/ascii` is its own header-only package and CMake `INTERFACE` target:
+    `include/eaux/text/ascii_string_view.hpp`, namespace `eaux::text`, with its own tests. It
+    knows nothing of `static_format` and also specializes `std::formatter`, so it works with
+    `std::format` on its own. It is in scope for this issue.
+  - `static_format` is a header-only `INTERFACE` target that links the ASCII target. The single
+    include is `include/eaux/static_format/static_format.hpp`, with internals under `detail/`.
   - CMake is used with strong reservations, and Claude maintains it. `c++/Makefile` wraps it,
     and `c++` joins `LANGUAGES` in the root Makefile.
 - **Tests:**
@@ -273,3 +279,10 @@ In this repo:
   channel. Braced specs are allowed on any built-in specifier, with unknown keys rejected. `ascii`
   was chosen over `utf:false` because it names what the string is. The benchmark gains an
   ASCII-newtype table-row variant, since the gain is unmeasured. ADRs 0001 and 0002 updated.
+- Q (Early): Where should `ascii_string_view` live? — A: Outside `static_format`, since it is
+  a vocabulary type independent of formatting. That needs an umbrella namespace for the C++ tree:
+  `eaux::`. `eaux::text::ascii_string_view` gets its own header-only package `c++/text/ascii`
+  (with `from`, the `_ascii` literal in `eaux::text::literals`, and a `std::formatter`
+  specialization), and `eaux::static_format` depends on it, not the reverse. The ASCII fast path
+  and `%{ascii}s` stay in `static_format`. Cost accepted: `static_format` is no longer a single
+  copyable header. A `text` sibling such as a validated UTF-8 view can follow later.
