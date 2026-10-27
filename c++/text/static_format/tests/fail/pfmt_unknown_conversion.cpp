@@ -1,0 +1,6 @@
+// expect: unknown printf conversion specifier
+#include <eaux/text/static_format/static_format.hpp>
+
+using namespace eaux::text::static_format::literals;
+
+auto f = "%k"_pfmt;
