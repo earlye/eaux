@@ -5,6 +5,9 @@
 
 #include <concepts>
 #include <cstddef>
+#include <iterator>
+#include <string>
+#include <string_view>
 #include <type_traits>
 
 // Each check is a function template whose template arguments carry the facts of the error (the
@@ -50,6 +53,25 @@ constexpr bool argument_count() {
   return Given >= Required && (Syn != syntax::printf || Given <= Required);
 }
 
+template <class T>
+constexpr bool static_formatter_members() {
+  using F = formatter<std::remove_cv_t<T>>;
+  constexpr bool has_parse = requires(std::string_view text) { F::parse(text); };
+  static_assert(has_parse, "static_format: formatter<T> needs a static constexpr parse(std::string_view) returning its spec");
+  if constexpr (!has_parse) {
+    return false;
+  } else {
+    using spec = decltype(F::parse(std::string_view{}));
+    constexpr bool has_format = requires(spec const& s, std::back_insert_iterator<std::string> out, T const& value) {
+      { F::format(s, out, value) } -> std::convertible_to<std::back_insert_iterator<std::string>>;
+    };
+    static_assert(has_format,
+                  "static_format: formatter<T> needs a static format(spec, out, value) that writes through the output "
+                  "iterator `out` and returns it");
+    return has_format;
+  }
+}
+
 template <std::size_t ArgNumber, char Conversion, bool AsciiOnly, class T>
 constexpr bool printf_argument() {
   if constexpr (Conversion == 'd' || Conversion == 'i') {
@@ -79,7 +101,11 @@ constexpr bool printf_argument() {
     return ok;
   } else if constexpr (Conversion == 'V') {
     static_assert(static_formattable<T>, "static_format: %V needs a specialization of eaux::text::static_format::formatter<T>");
-    return static_formattable<T>;
+    if constexpr (static_formattable<T>) {
+      return static_formatter_members<T>();
+    } else {
+      return false;
+    }
   } else {
     static_assert(std::floating_point<T>, "static_format: %f, %e, %g and %a need a floating-point argument");
     return std::floating_point<T>;
@@ -119,13 +145,17 @@ constexpr bool brace_builtin_argument() {
 
 template <std::size_t ArgId, class T, bool HasSpec>
 constexpr bool brace_user_argument() {
-  constexpr bool any = static_formattable<T> || std_formattable<T> || streamable<T>;
-  static_assert(any,
-                "static_format: no formatter for this type: specialize eaux::text::static_format::formatter<T> or "
-                "std::formatter<T>, or provide operator<<");
-  constexpr bool spec_ok = !HasSpec || static_formattable<T> || std_formattable<T>;
-  static_assert(!any || spec_ok, "static_format: a type formatted through operator<< takes no format spec");
-  return any && spec_ok;
+  if constexpr (static_formattable<T>) {
+    return static_formatter_members<T>();
+  } else {
+    constexpr bool any = std_formattable<T> || streamable<T>;
+    static_assert(any,
+                  "static_format: no formatter for this type: specialize eaux::text::static_format::formatter<T> or "
+                  "std::formatter<T>, or provide operator<<");
+    constexpr bool spec_ok = !HasSpec || std_formattable<T>;
+    static_assert(!any || spec_ok, "static_format: a type formatted through operator<< takes no format spec");
+    return any && spec_ok;
+  }
 }
 
 }  // namespace eaux::text::static_format::detail

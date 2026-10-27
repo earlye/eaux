@@ -87,8 +87,10 @@ template <class T>
 concept brace_builtin = brace_integer<T> || brace_char<T> || boolean<T> || std::floating_point<T> || string_like<T> ||
                         brace_pointer<T>;
 
+// Specialized at all: the primary template's deleted constructor marks it unspecialized.
+// diagnostics.hpp checks that a specialization has the members it needs.
 template <class T>
-concept static_formattable = requires(std::string_view text) { formatter<std::remove_cv_t<T>>::parse(text); };
+concept static_formattable = std::is_default_constructible_v<formatter<std::remove_cv_t<T>>>;
 
 // Disabled std::formatter specializations are not default constructible ([formatter.requirements]).
 template <class T>
