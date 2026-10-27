@@ -65,7 +65,7 @@ struct decoded {
 // covering one byte, so callers make progress and malformed input passes through unchanged.
 constexpr decoded decode(std::string_view s, std::size_t pos) noexcept {
   auto const byte = [&](std::size_t i) { return static_cast<unsigned char>(s[i]); };
-  constexpr decoded invalid{U'�', 1, false};
+  constexpr decoded invalid{U'\uFFFD', 1, false};
   unsigned const b0 = byte(pos);
   if (b0 < 0x80) return {b0, 1, true};
 
