@@ -44,6 +44,8 @@ def file_version(path):
     """The Unicode version a UCD file declares: in its "# Name-X.Y.Z.txt" first line, or, for
     emoji-data.txt, in a "# Version: X.Y.Z" line."""
     lines = path.read_text(encoding="utf-8").splitlines()[:16]
+    if not lines:
+        raise SystemExit(f"{path} is empty; delete it and run again")
     named = re.match(r"# \S+-(\d+\.\d+\.\d+)\.txt$", lines[0])
     if named:
         return named.group(1)
@@ -63,8 +65,12 @@ def fetch(version, cache):
     for name, path in FILES.items():
         target = cache / name
         if not target.exists():
+            # Written aside and renamed, so an interrupted download never leaves a truncated
+            # file that a later run would trust.
+            partial = target.with_suffix(".part")
             with urllib.request.urlopen(base + path) as response:
-                target.write_bytes(response.read())
+                partial.write_bytes(response.read())
+            partial.replace(target)
         found = file_version(target)
         if found != version:
             raise SystemExit(f"{target} declares Unicode {found}, not {version}")
