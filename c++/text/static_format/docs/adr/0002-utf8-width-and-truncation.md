@@ -24,6 +24,13 @@ stays infallible at runtime. The segmentation, width and scan code, and the Unic
 against `GraphemeBreakTest.txt`. The build assumes UTF-8 source and literal encoding (`/utf-8`
 on MSVC).
 
+`{:c}` on an integer writes the value as a code point in UTF-8, so `{:c}` of 0x4E2D is 中 and
+takes that character's display width. A value that is not a Unicode scalar value (negative, a
+surrogate, above U+10FFFF) becomes U+FFFD, as `%c` does for a wide character. This deliberately
+diverges from `std::format`, which writes a `char` and throws when the value does not fit one:
+here formatting stays infallible at run time, and a code point is the useful reading of an
+integer in UTF-8 text.
+
 ## Considered Options
 
 - Byte counting in `_pfmt` for exact `sprintf` fidelity, Unicode awareness only in `_bfmt`.

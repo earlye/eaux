@@ -135,9 +135,8 @@ constexpr bool brace_builtin_argument() {
     static_assert(type_ok, "static_format: presentation type not valid for this argument's type");
     // Sign, # and 0 need an arithmetic presentation; precision only means something for
     // floating point and strings.
-    constexpr bool numeric = std::floating_point<T> ||
-                             ((brace_integer<T> || brace_char<T> || boolean<T>) && Type != 0 && Type != 'c' && Type != 's') ||
-                             (brace_integer<T> && Type == 0);
+    constexpr bool numeric = std::floating_point<T> || brace_integer<T> ||
+                             ((brace_char<T> || boolean<T>) && Type != 0 && Type != 'c' && Type != 's');
     static_assert(!Arithmetic || numeric, "static_format: sign, # and 0 apply only to numbers");
     constexpr bool precision_ok = std::floating_point<T> || string_like<T>;
     static_assert(!Precision || precision_ok, "static_format: precision applies only to floating-point and string arguments");

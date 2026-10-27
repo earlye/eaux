@@ -33,6 +33,18 @@ TEST_CASE("integers match std::format") {
   CHECK_BRACE("{}|{}|{:x}", static_cast<signed char>(-5), static_cast<unsigned char>(200), std::uint8_t{255});
   CHECK_BRACE("{:<05}|{:>06}|{:#>06x}", 42, 42, 255);
   CHECK_BRACE("{:c}|{:-}|{:-}", 65, 5, -5);
+  CHECK_BRACE("{:+c}|{:-c}|{: c}|{:#c}|{:05c}", 65, 65, 65, 65, 65);
+}
+
+// std::format throws for a {:c} value that does not fit in char; _bfmt writes the code point as
+// UTF-8 and substitutes U+FFFD for anything that is not a Unicode scalar value.
+TEST_CASE("{:c} on an integer writes a code point") {
+  CHECK("{:c}"_bfmt(65) == "A");
+  CHECK("{:c}|[{:4c}]|[{:>4c}]"_bfmt(0x4E2D, 0x4E2D, 0x4E2D) == "\u4E2D|[\u4E2D  ]|[  \u4E2D]");
+  CHECK("{:c}"_bfmt(300) == "\u012C");
+  CHECK("{:c}"_bfmt(static_cast<unsigned char>(0xE9)) == "\u00E9");
+  CHECK("{:c}|{:c}|{:c}"_bfmt(-1, 0xD800, 0x110000) == "\uFFFD|\uFFFD|\uFFFD");
+  CHECK("{:c}"_bfmt(0x1'0000'0041LL) == "\uFFFD");  // would wrap to 'A' if narrowed first
 }
 
 TEST_CASE("bool and char match std::format") {

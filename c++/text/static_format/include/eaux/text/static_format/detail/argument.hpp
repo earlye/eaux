@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace eaux::text::static_format::detail {
 
@@ -113,7 +114,11 @@ void write_brace_builtin(Sink& sink, T const& value) {
     }
   } else if constexpr (brace_integer<T>) {
     if constexpr (type == 'c') {
-      write_char<Spec>(sink, static_cast<char>(value));
+      // The value is a code point, written as UTF-8; out of range becomes U+FFFD, as with %c on
+      // a wide character (std::format throws instead; see ADR 0002). Checked before narrowing so a
+      // wide value cannot wrap into range.
+      bool const scalar = std::cmp_greater_equal(value, 0) && std::cmp_less_equal(value, 0x10FFFF);
+      write_char<Spec>(sink, scalar ? static_cast<char32_t>(value) : U'\uFFFD');
     } else {
       write_integer<Spec>(sink, value);
     }

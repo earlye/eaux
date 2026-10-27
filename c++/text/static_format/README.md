@@ -59,7 +59,9 @@ auto [out, size] = "%-12s"_pfmt.to_n(buffer, 8, label);     // size: the untrunc
 `std::format`'s rules for the built-in types (including that extra arguments are allowed).
 Not supported yet: nested `{}` for dynamic width or precision, the `L` option and the `?` type.
 Chrono and range specs (`{:%Y-%m-%d}`, `{::x}`) work wherever the standard library formats
-those types, because such fields go to `std::formatter` (below).
+those types, because such fields go to `std::formatter` (below). One deliberate difference from
+`std::format`: `{:c}` on an integer writes that code point as UTF-8 (`{:c}` of `0x4E2D` is
+`中`), and a value that is not a Unicode scalar value becomes U+FFFD instead of throwing.
 
 A field on any other type uses, in order: `eaux::text::static_format::formatter<T>`, then
 `std::formatter<T>` (its spec checked at compile time), then `operator<<` if the spec is empty.
