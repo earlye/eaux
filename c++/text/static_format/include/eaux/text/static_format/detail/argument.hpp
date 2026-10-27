@@ -41,16 +41,16 @@ Out stream_to(Out out, T const& value) {
   return std::copy(text.begin(), text.end(), out);
 }
 
-// Output from a user formatter goes straight to the sink unless it must be measured (width,
-// precision) or cut at a grapheme boundary (to_n), in which case it is collected first.
+// Output from a user formatter goes straight to the sink unless width or precision means it
+// must be measured first.
 template <field_spec Spec, class Sink, class Produce>
 void write_produced(Sink& sink, Produce&& produce) {
-  if constexpr (!Sink::truncating && Spec.width == 0 && Spec.precision == no_precision) {
+  if constexpr (Spec.width == 0 && Spec.precision == no_precision) {
     produce(sink_iterator<Sink>(sink));
   } else {
     std::string text;
     produce(std::back_inserter(text));
-    write_text<Spec, charset::utf8>(sink, text);
+    write_text<Spec, false>(sink, text);
   }
 }
 
@@ -74,8 +74,7 @@ void write_printf(Sink& sink, T const& value) {
   } else if constexpr (conversion == 'c') {
     write_char<Spec>(sink, value);
   } else if constexpr (conversion == 's') {
-    constexpr charset kind = std::is_same_v<std::remove_cv_t<T>, ascii_string_view> ? charset::ascii : charset::utf8;
-    write_text<Spec, kind>(sink, as_string_view(value));
+    write_text<Spec, std::is_same_v<std::remove_cv_t<T>, ascii_string_view>>(sink, as_string_view(value));
   } else if constexpr (conversion == 'p') {
     if constexpr (std::is_null_pointer_v<T>) {
       write_pointer<Spec>(sink, 0);
@@ -102,7 +101,7 @@ void write_brace_builtin(Sink& sink, T const& value) {
   constexpr char type = Spec.conversion;
   if constexpr (boolean<T>) {
     if constexpr (type == 0 || type == 's') {
-      write_text<Spec, charset::ascii>(sink, value ? "true" : "false");
+      write_text<Spec, true>(sink, value ? "true" : "false");
     } else if constexpr (type == 'c') {
       write_char<Spec>(sink, static_cast<char>(value));
     } else {
@@ -129,8 +128,7 @@ void write_brace_builtin(Sink& sink, T const& value) {
       write_pointer<Spec>(sink, reinterpret_cast<std::uintptr_t>(value));
     }
   } else {
-    constexpr charset kind = std::is_same_v<std::remove_cv_t<T>, ascii_string_view> ? charset::ascii : charset::utf8;
-    write_text<Spec, kind>(sink, as_string_view(value));
+    write_text<Spec, std::is_same_v<std::remove_cv_t<T>, ascii_string_view>>(sink, as_string_view(value));
   }
 }
 

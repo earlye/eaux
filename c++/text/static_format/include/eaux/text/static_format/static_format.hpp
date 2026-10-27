@@ -21,36 +21,18 @@
 #include <eaux/text/static_format/detail/types.hpp>
 #include <eaux/text/unicode/unicode.hpp>
 
-#include <array>
+#include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <format>
 #include <iterator>
 #include <memory>
-#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
 
 namespace eaux::text::static_format {
-
-namespace detail {
-
-constexpr std::size_t grapheme_count(std::string_view s) noexcept {
-  std::size_t n = 0;
-  for (std::size_t pos = 0; pos < s.size(); pos = unicode::next_grapheme_break(s, pos)) ++n;
-  return n;
-}
-
-template <std::size_t N>
-constexpr std::array<std::size_t, N> grapheme_ends(std::string_view s) noexcept {
-  std::array<std::size_t, N> ends{};
-  std::size_t pos = 0;
-  for (auto& end : ends) end = pos = unicode::next_grapheme_break(s, pos);
-  return ends;
-}
-
-}  // namespace detail
 
 template <detail::syntax Syn, fixed_string S>
 class compiled_format {
@@ -85,32 +67,25 @@ class compiled_format {
     }
   }
 
-  // Writes at most `n` bytes, never splitting a grapheme cluster, and returns the iterator past
-  // the output with the size the whole output would have had.
+  // Writes the longest prefix of the output that fits in `n` bytes and ends on a grapheme
+  // cluster boundary, and returns the iterator past it with the size the whole output would have
+  // had. The output is formatted in full first: a cluster can span a literal and an argument, so
+  // only the complete text shows where the boundaries are.
   template <std::output_iterator<char const&> Out, class... Args>
   std::format_to_n_result<Out> to_n(Out out, std::iter_difference_t<Out> n, Args const&... args) const {
-    auto const room = n > 0 ? static_cast<std::size_t>(n) : std::size_t{0};
+    detail::string_sink sink;
+    render(sink, args...);
+    std::string_view const all = sink.view();
+    std::string_view const fits = all.substr(0, unicode::byte_prefix(all, n > 0 ? static_cast<std::size_t>(n) : 0));
     if constexpr (detail::char_contiguous<Out>) {
-      auto* const first = std::to_address(out);
-      detail::truncating_sink<detail::pointer_sink> sink{{first}, room};
-      render(sink, args...);
-      return {out + (sink.inner.out - first), static_cast<std::iter_difference_t<Out>>(sink.total)};
+      if (!fits.empty()) std::memcpy(std::to_address(out), fits.data(), fits.size());
+      return {out + static_cast<std::iter_difference_t<Out>>(fits.size()), static_cast<std::iter_difference_t<Out>>(all.size())};
     } else {
-      detail::truncating_sink<detail::iterator_sink<Out>> sink{{std::move(out)}, room};
-      render(sink, args...);
-      return {std::move(sink.inner.out), static_cast<std::iter_difference_t<Out>>(sink.total)};
+      return {std::copy(fits.begin(), fits.end(), std::move(out)), static_cast<std::iter_difference_t<Out>>(all.size())};
     }
   }
 
  private:
-  static constexpr std::string_view literal(std::size_t i) noexcept {
-    return {parsed.text + parsed.segments[i].begin, parsed.segments[i].size};
-  }
-
-  // Where each grapheme cluster of literal segment I ends, so to_n can cut it with a lookup.
-  template <std::size_t I>
-  static constexpr auto literal_ends = detail::grapheme_ends<detail::grapheme_count(literal(I))>(literal(I));
-
   template <class Sink, class... Args>
   static void render(Sink& sink, Args const&... args) {
     if constexpr (detail::argument_count<Syn, arguments, sizeof...(Args)>()) {
@@ -125,14 +100,7 @@ class compiled_format {
   static void emit(Sink& sink, [[maybe_unused]] void const* const* pointers) {
     constexpr detail::segment seg = parsed.segments[I];
     if constexpr (seg.kind == detail::segment_kind::literal) {
-      constexpr std::string_view text(parsed.text + seg.begin, seg.size);
-      if constexpr (seg.ascii) {
-        sink.put(text, detail::charset::ascii);
-      } else if constexpr (Sink::truncating) {
-        sink.put(text, std::span<std::size_t const>(literal_ends<I>));
-      } else {
-        sink.put(text, detail::charset::utf8);
-      }
+      sink.put(std::string_view(parsed.text + seg.begin, seg.size));
     } else {
       using T = detail::type_at<seg.arg, Args...>;
       detail::write_argument<seg.spec, seg.arg, detail::substring<S, seg.spec.raw_begin, seg.spec.raw_size>()>(

@@ -216,7 +216,8 @@ struct prefix {
 constexpr prefix width_prefix(std::string_view s, std::size_t max_width) noexcept {
   std::size_t const ascii = ascii_prefix(s);
   if (ascii == s.size() || ascii > max_width) {
-    std::size_t const n = max_width < s.size() ? max_width : s.size();
+    std::size_t n = max_width < s.size() ? max_width : s.size();
+    if (n > 0 && n < s.size() && s[n - 1] == '\r' && s[n] == '\n') --n;  // CR LF is one cluster
     return {n, n};
   }
   std::size_t pos = ascii == 0 ? 0 : ascii - 1;

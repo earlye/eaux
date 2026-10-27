@@ -93,6 +93,9 @@ TEST_CASE("width_prefix never splits a cluster") {
 
   auto const cut = u::width_prefix("abe\u0301", 2);
   CHECK(cut.size == 2);
+
+  CHECK(u::width_prefix("ab\r\ncd", 3).size == 2);
+  CHECK(u::width_prefix("ab\r\ncd", 4).size == 4);
 }
 
 TEST_CASE("byte_prefix stops at a cluster boundary") {

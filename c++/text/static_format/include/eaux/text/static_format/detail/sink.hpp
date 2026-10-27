@@ -1,26 +1,19 @@
 #pragma once
 
-#include <eaux/text/unicode/unicode.hpp>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <iterator>
-#include <span>
 #include <string>
 #include <string_view>
 
-// Sinks receive the formatted output in pieces. A piece is tagged ASCII or UTF-8 so the
-// truncating sink knows whether any cut is valid or it must find a grapheme boundary.
+// Sinks receive the formatted output in pieces.
 namespace eaux::text::static_format::detail {
 
-enum class charset : unsigned char { ascii, utf8 };
-
 struct pointer_sink {
-  static constexpr bool truncating = false;
   char* out;
 
-  void put(std::string_view s, charset = charset::ascii) noexcept {
+  void put(std::string_view s) noexcept {
     if (!s.empty()) std::memcpy(out, s.data(), s.size());
     out += s.size();
   }
@@ -33,10 +26,9 @@ struct pointer_sink {
 
 template <class Out>
 struct iterator_sink {
-  static constexpr bool truncating = false;
   Out out;
 
-  void put(std::string_view s, charset = charset::ascii) { out = std::copy(s.begin(), s.end(), std::move(out)); }
+  void put(std::string_view s) { out = std::copy(s.begin(), s.end(), std::move(out)); }
   void put(char c) { *out++ = c; }
   void fill(char c, std::size_t n) { out = std::fill_n(std::move(out), n, c); }
 };
@@ -45,9 +37,8 @@ struct iterator_sink {
 // final size (often within the small-string buffer) and long ones grow geometrically.
 class string_sink {
  public:
-  static constexpr bool truncating = false;
 
-  void put(std::string_view s, charset = charset::ascii) {
+  void put(std::string_view s) {
     if (!spilled_ && s.size() <= sizeof buffer_ - size_) {
       if (!s.empty()) std::memcpy(buffer_ + size_, s.data(), s.size());
       size_ += s.size();
@@ -65,6 +56,7 @@ class string_sink {
     }
   }
 
+  std::string_view view() const noexcept { return spilled_ ? std::string_view(heap_) : std::string_view(buffer_, size_); }
   std::string take() && { return spilled_ ? std::move(heap_) : std::string(buffer_, size_); }
 
  private:
@@ -81,60 +73,6 @@ class string_sink {
   std::size_t size_ = 0;
   bool spilled_ = false;
   std::string heap_;
-};
-
-// Counts every byte but writes only whole grapheme clusters while they fit; after the first
-// piece that does not fit it writes nothing more, so later short pieces cannot follow a gap.
-template <class Inner>
-struct truncating_sink {
-  static constexpr bool truncating = true;
-  Inner inner;
-  std::size_t room;
-  std::size_t total = 0;
-  bool full = false;
-
-  void put(std::string_view s, charset kind = charset::ascii) {
-    total += s.size();
-    if (full) return;
-    if (s.size() <= room) {
-      inner.put(s, kind);
-      room -= s.size();
-      return;
-    }
-    inner.put(s.substr(0, kind == charset::ascii ? room : unicode::byte_prefix(s, room)), kind);
-    full = true;
-  }
-  // A literal whose cluster ends were computed at compile time.
-  void put(std::string_view s, std::span<std::size_t const> ends) {
-    total += s.size();
-    if (full) return;
-    if (s.size() <= room) {
-      inner.put(s, charset::utf8);
-      room -= s.size();
-      return;
-    }
-    auto const fits = std::upper_bound(ends.begin(), ends.end(), room);
-    inner.put(s.substr(0, fits == ends.begin() ? 0 : *std::prev(fits)), charset::utf8);
-    full = true;
-  }
-  void put(char c) {
-    ++total;
-    if (full) return;
-    if (room == 0) {
-      full = true;
-      return;
-    }
-    inner.put(c);
-    --room;
-  }
-  void fill(char c, std::size_t n) {
-    total += n;
-    if (full) return;
-    std::size_t const m = std::min(n, room);
-    inner.fill(c, m);
-    room -= m;
-    full = m < n;
-  }
 };
 
 // An output iterator over a sink, for formatters that write through iterators.

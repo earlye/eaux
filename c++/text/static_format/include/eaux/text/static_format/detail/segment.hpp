@@ -71,7 +71,6 @@ struct segment {
   segment_kind kind = segment_kind::literal;
   std::size_t begin = 0;  // literal: offset into the unescaped text
   std::size_t size = 0;
-  bool ascii = true;
   std::size_t arg = 0;  // argument: zero-based index
   field_spec spec{};
 };

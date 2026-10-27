@@ -105,13 +105,12 @@ struct building_visitor {
 
   constexpr void literal(char c) noexcept {
     if (!open) {
-      out.segments[next++] = segment{segment_kind::literal, text, 0, true, 0, {}};
+      out.segments[next++] = segment{segment_kind::literal, text, 0, 0, {}};
       open = true;
     }
     auto& seg = out.segments[next - 1];
     out.text[text++] = c;
     ++seg.size;
-    if (static_cast<unsigned char>(c) >= 0x80) seg.ascii = false;
   }
   constexpr void field(segment const& s) noexcept {
     out.segments[next++] = s;
@@ -148,7 +147,7 @@ constexpr parse_result parse_printf(std::string_view s, Visitor& visitor) noexce
       continue;
     }
 
-    segment field{segment_kind::argument, 0, 0, true, 0, {}};
+    segment field{segment_kind::argument, 0, 0, 0, {}};
     field.spec.syn = syntax::printf;
     std::size_t index = 0;  // 1-based when positional
     std::size_t digits_end = i;
@@ -288,7 +287,7 @@ constexpr parse_result parse_brace(std::string_view s, Visitor& visitor) noexcep
     }
 
     std::size_t const start = i++;
-    segment field{segment_kind::argument, 0, 0, true, 0, {}};
+    segment field{segment_kind::argument, 0, 0, 0, {}};
     field.spec.syn = syntax::brace;
     if (i == s.size()) return fail(parse_error::brace_unterminated, start);
     if (is_digit(s[i])) {

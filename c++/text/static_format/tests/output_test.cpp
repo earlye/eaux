@@ -57,7 +57,7 @@ TEST_CASE("to_n never splits a grapheme cluster") {
   CHECK(view("%s"_pfmt.to_n(buffer, 4, "ae\u0301").out) == "ae\u0301");
   CHECK(view("%s"_pfmt.to_n(buffer, 5, "\U0001F1FA\U0001F1F8").out) == "");
 
-  // In a literal, through the boundaries computed at compile time.
+  // In a literal.
   CHECK(view("caf\u00E9 %d"_pfmt.to_n(buffer, 4, 1).out) == "caf");
   CHECK(view("caf\u00E9 %d"_pfmt.to_n(buffer, 5, 1).out) == "caf\u00E9");
   CHECK(view("e\u0301e\u0301{}"_bfmt.to_n(buffer, 5, 1).out) == "e\u0301");
@@ -68,15 +68,26 @@ TEST_CASE("to_n never splits a grapheme cluster") {
   // In a multi-byte fill.
   CHECK(view("{:\u00B7>4}"_bfmt.to_n(buffer, 5, 1).out) == "\u00B7\u00B7");
 
+  // Across a literal and an argument, in either order.
+  CHECK(view("e%s"_pfmt.to_n(buffer, 1, "\u0301").out) == "");
+  CHECK(view("%s\u0301"_pfmt.to_n(buffer, 1, "e").out) == "");
+  CHECK(view("{}\u0301x"_bfmt.to_n(buffer, 3, "e").out) == "e\u0301");
+
   // Nothing follows a cut, even a piece that would fit.
   CHECK(view("%s%s"_pfmt.to_n(buffer, 2, "\u00E9\u00E9", "x").out) == "\u00E9");
 }
 
-TEST_CASE("ASCII pieces cut anywhere") {
+TEST_CASE("ASCII cuts anywhere except inside CR LF") {
   char buffer[16];
   auto const r = "%{ascii}s|%08.3f"_pfmt.to_n(buffer, 7, "abcdef"_ascii, 3.14159);
   CHECK(std::string_view(buffer, static_cast<std::size_t>(r.out - buffer)) == "abcdef|");
   CHECK(r.size == 15);
+
+  auto const crlf = "ab\r\n%d"_pfmt.to_n(buffer, 3, 1);
+  CHECK(std::string_view(buffer, static_cast<std::size_t>(crlf.out - buffer)) == "ab");
+  CHECK("[%.3s]"_pfmt("ab\r\ncd") == "[ab]");
+  CHECK("[%.3s]"_pfmt("ab\r\ncd"_ascii) == "[ab]");
+  CHECK("[%.4s]"_pfmt("ab\r\ncd"_ascii) == "[ab\r\n]");
 }
 
 TEST_CASE("to_n through a non-contiguous iterator") {

@@ -57,10 +57,6 @@ static_assert(parse_all<syntax::printf>("100%% done").info.segments == 1);
 static_assert(literal_is("100%% done", 0, "100% done"));
 static_assert(parse_all<syntax::brace>("{{x}}").info.segments == 1);
 
-// Literals know whether they are ASCII.
-static_assert(parse_all<syntax::printf>("abc").segments[0].ascii);
-static_assert(!parse_all<syntax::printf>("\u00B5s").segments[0].ascii);
-
 // Argument indexing.
 static_assert(parse_all<syntax::printf>("%d %d %d").info.arguments == 3);
 static_assert(parse_all<syntax::printf>("%2$s %1$s").segments[0].arg == 1);
