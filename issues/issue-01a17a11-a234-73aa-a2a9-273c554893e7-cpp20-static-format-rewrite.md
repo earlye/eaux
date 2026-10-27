@@ -71,8 +71,8 @@ Further printf rules:
 
 - Length modifiers (`hh h l ll z j t L`) are accepted and ignored.
 - `C S` are compile errors that explain they are deprecated wide forms.
-- For `v` and `V`, width and `-` pad the output, precision truncates, and other flags are
-  errors. See ADR 0001.
+- For `v` and `V`, width and the alignment flags `- ^ >` pad the output, precision truncates,
+  and other flags are errors. See ADR 0001.
 - Any built-in specifier may take a braced spec before its letter, and unknown keys are compile
   errors. The only key so far is `ascii` on `%s`.
 - Flags:
@@ -97,7 +97,8 @@ order:
 
 ### Conversion, text and locale
 
-- Numbers are converted with `std::to_chars`; there are no iostreams.
+- Numbers are converted with `std::to_chars`, not iostreams; only the `operator<<` fallback goes
+  through a stream, imbued with the classic locale.
 - Output is always "C"-locale.
 - Text is UTF-8 everywhere, in both syntaxes, and the unit is the extended grapheme cluster
   (UAX #29):
@@ -107,8 +108,7 @@ order:
 - How the text handling is implemented:
   - `to_n` formats the complete output into the stack-buffered sink, then copies the longest
     prefix ending on a grapheme boundary, so a cluster spanning a literal and an argument is
-    never split. (Superseded the earlier plan of per-literal precomputed boundaries, which cut
-    such clusters.)
+    never split.
   - Runtime strings get a word-wise up-front scan for bytes >= 0x80. ASCII strings take the
     length-equals-width fast path, so there is no opt-out mode.
   - Malformed UTF-8 passes through.
