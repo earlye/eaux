@@ -52,14 +52,17 @@ struct grouping : std::numpunct<char> {
 
 template <>
 struct std::formatter<demo::point> : std::formatter<std::string_view> {
-  auto format(demo::point const& p, std::format_context& ctx) const {
+  // Generic over the context, as std::formattable requires.
+  template <class FormatContext>
+  auto format(demo::point const& p, FormatContext& ctx) const {
     return std::formatter<std::string_view>::format(std::format("({}, {})", p.x, p.y), ctx);
   }
 };
 
 template <>
 struct std::formatter<demo::both> : std::formatter<std::string_view> {
-  auto format(demo::both const&, std::format_context& ctx) const {
+  template <class FormatContext>
+  auto format(demo::both const&, FormatContext& ctx) const {
     return std::formatter<std::string_view>::format("std", ctx);
   }
 };

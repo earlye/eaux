@@ -3,6 +3,8 @@
 #include <doctest/doctest.h>
 
 #include <format>
+// doctest prints string_view values with operator<<, which MSVC only defines once <ostream> is in.
+#include <ostream>
 #include <string>
 #include <string_view>
 #include <unordered_map>

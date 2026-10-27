@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <climits>
+#include <cstdio>
 #include <cstdint>
 #include <format>
 #include <limits>
@@ -14,6 +15,23 @@ using namespace std::string_literals;
 using namespace std::string_view_literals;
 
 // The same string through _bfmt and through std::format.
+namespace {
+
+std::string c_printf(char const* format, double v1, double v2) {
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
+  std::string out(static_cast<std::size_t>(std::snprintf(nullptr, 0, format, v1, v2)), '\0');
+  std::snprintf(out.data(), out.size() + 1, format, v1, v2);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+  return out;
+}
+
+}  // namespace
+
 #define CHECK_BRACE(fmt, ...) CHECK(fmt##_bfmt(__VA_ARGS__) == std::format(fmt, __VA_ARGS__))
 
 TEST_CASE("escapes and indexing") {
@@ -60,7 +78,9 @@ TEST_CASE("floating point matches std::format") {
     CHECK_BRACE("{}|{:10}|{:<10}|{:^10}|{:+}|{: }|{:010}|{:#}", v, v, v, v, v, v, v, v);
     CHECK_BRACE("{:f}|{:.3f}|{:10.3f}|{:F}|{:+.2f}|{:#.0f}|{:010.2f}", v, v, v, v, v, v, v);
     CHECK_BRACE("{:e}|{:.3e}|{:E}|{:#.0e}", v, v, v, v);
-    CHECK_BRACE("{:g}|{:.3g}|{:G}|{:#g}|{:#.3g}|{:.0g}|{:.3}", v, v, v, v, v, v, v);
+    CHECK_BRACE("{:g}|{:.3g}|{:G}|{:.0g}|{:.3}", v, v, v, v, v);
+    // libc++'s std::format drops a significant digit under # with g (0.10000 for 0.1); C's %#g is the rule.
+    CHECK("{:#g}|{:#.3g}"_bfmt(v, v) == c_printf("%#g|%#.3g", v, v));
     CHECK_BRACE("{:a}|{:.3a}|{:A}|{:#a}|{:12a}", v, v, v, v, v);
   }
   CHECK_BRACE("{}|{}|{:.3}", 2.5f, 0.1f, 0.1f);

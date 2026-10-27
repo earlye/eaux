@@ -92,9 +92,18 @@ concept brace_builtin = brace_integer<T> || brace_char<T> || boolean<T> || std::
 template <class T>
 concept static_formattable = std::is_default_constructible_v<formatter<std::remove_cv_t<T>>>;
 
-// Disabled std::formatter specializations are not default constructible ([formatter.requirements]).
-template <class T>
-concept std_formattable = std::is_default_constructible_v<std::formatter<std::remove_cv_t<T>, char>>;
+// std::formattable<T, char> ([format.formattable]), spelled out because libstdc++ only provides
+// it from GCC 15. As the standard does, it requires format() to accept a context over an
+// iterator other than std::format_context's: libc++ rejects a formatter whose format() takes
+// std::format_context& specifically, so such a formatter must not count as usable here.
+template <class T, class F = std::formatter<std::remove_cv_t<T>, char>>
+concept std_formattable =
+    std::semiregular<F> &&
+    requires(F& f, F const& cf, T const& value, std::format_parse_context& parse,
+             std::basic_format_context<std::back_insert_iterator<std::string>, char>& format) {
+      { f.parse(parse) } -> std::same_as<std::format_parse_context::iterator>;
+      { cf.format(value, format) } -> std::same_as<std::back_insert_iterator<std::string>>;
+    };
 
 template <class T>
 concept streamable = requires(std::ostream& os, T const& value) { os << value; };
