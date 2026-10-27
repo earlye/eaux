@@ -2,7 +2,7 @@
 
 `_pfmt` extends printf grammar with two specifiers for user-defined types instead of letting `%s`
 accept anything formattable. `%v` is the runtime route: `std::formatter<T>` if specialized, else
-`operator<<`. `%V` uses `eaux::static_format::formatter<T>`, whose `constexpr parse` turns an optional
+`operator<<`. `%V` uses `eaux::text::static_format::formatter<T>`, whose `constexpr parse` turns an optional
 braced spec placed before the letter (`%[N$][flags][width][.precision][{spec}]V`) into a
 structural value at compile time. The brace is placed before the letter because `{` is not a
 printf flag or digit, while a spec after the letter (`%V{...}`) would be ambiguous with literal
@@ -18,7 +18,7 @@ text. The extension leaves standard printf strings untouched.
 ## Consequences
 
 `_bfmt` reaches the same formatters without an explicit choice. For `{:spec}` on a user type it
-tries `eaux::static_format::formatter<T>`, then `std::formatter<T>`, then `operator<<` (empty spec
+tries `eaux::text::static_format::formatter<T>`, then `std::formatter<T>`, then `operator<<` (empty spec
 only). In printf syntax the letter makes that choice, so the asymmetry is deliberate.
 
 The braced spec is not limited to `%V`: any built-in specifier may take one, and unknown keys are

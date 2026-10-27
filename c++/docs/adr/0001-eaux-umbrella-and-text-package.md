@@ -1,7 +1,7 @@
 # `eaux::` umbrella namespace, with validated text types in their own package
 
 All C++ in this repo lives under one umbrella namespace, `eaux::`, with one sub-namespace per
-component (`eaux::static_format`, `eaux::text`). This follows the one-project-namespace convention
+component (`eaux::text::static_format`, `eaux::text`). This follows the one-project-namespace convention
 of boost, absl and folly, and avoids claiming global names. `eaux::text::ascii_string_view`, a
 validated type proving a string has no bytes >= 0x80, is a vocabulary type rather than a
 formatting detail, so it lives in its own header-only package, `c++/text/ascii`. `static_format`
