@@ -36,7 +36,8 @@ and also boost-style `%N%`.
   `_fmt` is avoided because `std::` may claim it.
   - `"{:#04x}"_bfmt` is brace syntax: `std::format`'s replacement-field grammar, i.e.
     `{[arg-id][:[[fill]align][sign][#][0][width][.precision][type]]}` with `{{`/`}}` escapes.
-    Nested dynamic width/precision, chrono/range specs and `L` are deferred.
+    Nested dynamic width/precision and `L` are deferred. Chrono and range specs work through the
+    `std::formatter` fallback for those types.
   - `"0x%02X"_pfmt` is printf syntax plus boost-style `%N%`.
 - The literals live in `eaux::text::static_format::literals`.
 - Calls are eager:

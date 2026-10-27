@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <charconv>
+#include <chrono>
 #include <format>
 #include <locale>
 #include <ostream>
@@ -10,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 using namespace eaux::text::static_format::literals;
 
@@ -143,4 +145,12 @@ TEST_CASE("operator<< output stays \"C\"-locale under a grouping global locale")
   CHECK("{}"_bfmt(demo::count{}) == "1234567");
   CHECK("%1%"_pfmt(demo::count{}) == "1234567");
   std::locale::global(previous);
+}
+
+TEST_CASE("chrono and range specs reach std::formatter") {
+  using namespace std::chrono;
+  CHECK("{:%Y-%m-%d}"_bfmt(sys_days{year{2026} / 10 / 26}) == "2026-10-26");
+#if defined(__cpp_lib_format_ranges)
+  CHECK("{::x}"_bfmt(std::vector<int>{10, 255}) == "[a, ff]");
+#endif
 }

@@ -57,8 +57,9 @@ auto [out, size] = "%-12s"_pfmt.to_n(buffer, 8, label);     // size: the untrunc
 
 `{[arg-id][:[[fill]align][sign][#][0][width][.precision][type]]}` with `{{` and `}}`, following
 `std::format`'s rules for the built-in types (including that extra arguments are allowed).
-Not supported yet: nested `{}` for dynamic width or precision, the `L` option, the `?` type,
-and chrono or range specs.
+Not supported yet: nested `{}` for dynamic width or precision, the `L` option and the `?` type.
+Chrono and range specs (`{:%Y-%m-%d}`, `{::x}`) work wherever the standard library formats
+those types, because such fields go to `std::formatter` (below).
 
 A field on any other type uses, in order: `eaux::text::static_format::formatter<T>`, then
 `std::formatter<T>` (its spec checked at compile time), then `operator<<` if the spec is empty.

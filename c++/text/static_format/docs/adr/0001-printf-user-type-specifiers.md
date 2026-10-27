@@ -1,4 +1,4 @@
-# printf syntax formats user-defined types with `%v` and `%V{spec}`
+# printf syntax formats user-defined types with `%v` and `%{spec}V`
 
 `_pfmt` extends printf grammar with two specifiers for user-defined types instead of letting `%s`
 accept anything formattable. `%v` is the runtime route: `std::formatter<T>` if specialized, else

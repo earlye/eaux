@@ -2,8 +2,9 @@
 
 All C++ in this repo lives under one umbrella namespace, `eaux::`, with one sub-namespace per
 component. Formatting is a text concern, so the text packages share `eaux::text` and live under
-`c++/text/`, each directory named like its namespace: `c++/text/static_format`
-(`eaux::text::static_format`), `c++/text/ascii` and `c++/text/unicode` (`eaux::text::unicode`).
+`c++/text/`. A package that has its own namespace lives in a directory of the same name:
+`c++/text/static_format` (`eaux::text::static_format`) and `c++/text/unicode`
+(`eaux::text::unicode`). `c++/text/ascii` holds one vocabulary type directly in `eaux::text`.
 This follows the one-project-namespace convention of boost, absl and folly, and avoids claiming
 global names. `eaux::text::ascii_string_view`, a validated type proving a string has no bytes >=
 0x80, is a vocabulary type rather than a formatting detail, so it lives in its own header-only
@@ -23,5 +24,5 @@ which `static_format` also links.
 
 ## Consequences
 
-`static_format` is no longer a single self-contained header; using it means taking the ASCII
-and unicode packages too.
+Using `static_format` means taking the ASCII and unicode packages too; it is not a single
+self-contained header.

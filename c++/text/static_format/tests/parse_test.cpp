@@ -42,7 +42,7 @@ constexpr parse_error error_of(char const (&s)[N]) {
   return scan<Syn>(std::string_view(s, N - 1)).error;
 }
 
-// Segments, as the original's segment_at tests checked them.
+// Segments.
 static_assert(parse_all<syntax::printf>("test %s foo").info.segments == 3);
 static_assert(parse_all<syntax::printf>("test %s foo").segments[0].kind == segment_kind::literal);
 static_assert(parse_all<syntax::printf>("test %s foo").segments[1].kind == segment_kind::argument);
@@ -67,7 +67,7 @@ static_assert(parse_all<syntax::printf>("%3%").segments[0].spec.syn == syntax::b
 static_assert(parse_all<syntax::brace>("{1} {0} {1}").info.arguments == 2);
 static_assert(parse_all<syntax::brace>("{} {}").segments[2].arg == 1);
 
-// Flags, as the original's find_flags tests checked them, with alignment's new meanings.
+// Flags, including the alignment extensions ^ = >.
 static_assert(printf_spec("%1$f").alignment == align::none);
 static_assert(printf_spec("%1$-f").alignment == align::left);
 static_assert(printf_spec("%1$=f").alignment == align::internal);
@@ -84,7 +84,7 @@ static_assert(printf_spec("%+#f").alternate && printf_spec("%+#f").sign_mode == 
 static_assert(printf_spec("%+#.4f").precision == 4);
 static_assert(printf_spec("%--5d").alignment == align::left);
 
-// Width and precision, as the original's find_width and find_precision tests checked them.
+// Width and precision.
 static_assert(printf_spec("%1$-2d").width == 2);
 static_assert(printf_spec("%2d").width == 2);
 static_assert(printf_spec("%d").width == 0);

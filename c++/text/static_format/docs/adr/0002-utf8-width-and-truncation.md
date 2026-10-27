@@ -8,11 +8,12 @@ last complete grapheme that fits while still returning the untruncated size. Thi
 labels like `µ`, `σ_max` or a combining accent stays column-aligned and never loses part of a
 character.
 
-Literal segments are classified as ASCII or UTF-8 at compile time; UTF-8 literals carry
-precomputed grapheme boundaries, so clamping one is a table lookup. Runtime strings are scanned
-up front for any byte >= 0x80, a branch-free word-wise OR that the compiler can vectorize. ASCII
-strings take a fast path where length equals width and any cut is valid. Only non-ASCII strings
-walk graphemes. Malformed UTF-8 passes through unchanged.
+A cluster can span a literal and an argument (`"e%s"` with a combining accent), so `to_n`
+formats the whole output, which it must measure anyway for the untruncated size, and cuts that
+at the last cluster boundary that fits. Runtime strings are scanned up front for any byte >= 0x80,
+a branch-free word-wise OR that the compiler can vectorize. ASCII strings take a fast path where
+length equals width and any cut is valid except between CR and LF. Only non-ASCII strings walk
+graphemes. Malformed UTF-8 passes through unchanged.
 `eaux::text::ascii_string_view` is a validated type that carries the ASCII guarantee: it validates once at
 construction (`consteval` from a `_ascii` literal; `ascii_string_view::from(sv)` returns
 `std::expected<ascii_string_view, std::size_t>` with the offset of the first byte >= 0x80), and
