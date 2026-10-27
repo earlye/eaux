@@ -4,11 +4,11 @@ on:
   push:
     branches: [main]
     paths:
-      - "c++/**"
+      - 'c\+\+/**'
       - ".github/workflows/cpp.yml"
   pull_request:
     paths:
-      - "c++/**"
+      - 'c\+\+/**'
       - ".github/workflows/cpp.yml"
 
 jobs:
