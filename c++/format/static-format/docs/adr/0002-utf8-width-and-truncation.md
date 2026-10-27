@@ -13,11 +13,11 @@ precomputed grapheme boundaries, so clamping one is a table lookup. Runtime stri
 up front for any byte >= 0x80, a branch-free word-wise OR that the compiler can vectorize. ASCII
 strings take a fast path where length equals width and any cut is valid. Only non-ASCII strings
 walk graphemes. Malformed UTF-8 passes through unchanged.
-`static_format::ascii_string_view` carries the ASCII guarantee in the type: it validates once at
+`static_format::ascii_string_view` is a validated type that carries the ASCII guarantee: it validates once at
 construction (`consteval` from a `_ascii` literal; `ascii_string_view::from(sv)` returns
 `std::expected<ascii_string_view, std::size_t>` with the offset of the first byte >= 0x80), and
 formatting selects the ASCII emitter for it at compile time with no scan. `%{ascii}s` makes the
-newtype a compile-time requirement for that argument; it is not a runtime refusal, so formatting
+validated type a compile-time requirement for that argument; it is not a runtime refusal, so formatting
 stays infallible at runtime. Unicode property tables are generated
 by a script in the package into a checked-in header, pinned to one Unicode version, and tested
 against `GraphemeBreakTest.txt`. The build assumes UTF-8 source and literal encoding (`/utf-8`
@@ -30,5 +30,5 @@ on MSVC).
 - Code-point granularity with no tables. Rejected: a cut can drop a combining accent and leave
   the wrong letter.
 - A switch for a single-byte mode. Rejected as redundant with the ASCII fast path.
-- `%{utf:false}s` refusing non-ASCII at format time. Rejected in favour of the newtype: a
+- `%{utf:false}s` refusing non-ASCII at format time. Rejected in favour of the validated type: a
   format-time refusal needs a runtime error channel the library otherwise lacks.
