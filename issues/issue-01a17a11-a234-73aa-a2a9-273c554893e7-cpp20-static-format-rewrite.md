@@ -1,12 +1,13 @@
-# C++20 rewrite of formattype as c++/format/static-format
+# C++23 rewrite of formattype as c++/format/static-format
 
 ## Context
 
-Early wants a modern C++20 rewrite of their old compile-time format library, `formattype`
+Early wants a modern C++ rewrite of their old compile-time format library, `formattype`
 (2019, C++17), to live in this repo at `c++/format/static-format`. That is Early's suggested
 name. It matches the repo's `{language}/{area}/{package}` layout (`go/...`, `rust/ipc/app-agent`),
-but this would be the first C++ tree here. Requested by the `stdplus` Claude session on Early's
-behalf.
+but this is the first C++ tree here. Requested by the `stdplus` Claude session on Early's
+behalf. (The work started out as a C++20 rewrite, which is why the branch and filename still say
+`cpp20`; the grill moved it to C++23.)
 
 The original was written to replace `sprintf` in a profiled hot path. Usage:
 `FORMAT("0x%02X") % 0xff`. It takes printf-style specs `%[N$][flags][width][.precision]spec`
@@ -17,40 +18,120 @@ and also boost-style `%N%`.
 - The format string is lifted into a type with the vendored `irqus::typestring` macro, which
   caps strings at 128 chars and silently truncates longer ones.
 - Segments are parsed by recursive template structs.
-- `operator%` chains the arguments as a reverse linked list of pointers to temporaries.
+- `operator%` chains the arguments as a reverse linked list of pointers to temporaries. The
+  resulting lazy object becomes text through implicit `operator std::string`, `operator==`,
+  `operator+` or `<<`.
 - Output is a chain of segment writes through `std::ostream` manipulators, unrolled at compile
   time. Parsing therefore costs nothing at runtime. `std::format` is different: it validates at
-  compile time (`consteval` `format_string`) but parses again at runtime.
+  compile time (`consteval` `format_string`) but parses again at runtime. fmt's `FMT_COMPILE`
+  already does the compile-time-parse trick, so it is the bar the benchmark has to clear.
 
-### What the rewrite should do
+## Design
 
-- Replace typestring with a C++20 class-type NTTP `fixed_string<N>` (`template<fixed_string S>`),
-  with no length cap. Also provide a UDL, `template<fixed_string S> operator""_fmt()`, so callers
-  don't need a macro.
-- Parse with ordinary `constexpr` functions over `S.data`. Use templates only where the result
-  has to become a type, such as a tuple of segment descriptors.
-- Store arguments by value in a `std::tuple`, not as pointers to temporaries.
-- Check argument types against their specifiers at compile time; the original checks only the
-  argument count. Mismatches should fail with `static_assert` messages rather than
-  "no match for operator" errors.
-- Consider converting numbers with `std::to_chars` instead of iostreams, since going through
-  `ostream` may cancel out the speed advantage over `sprintf`.
-- Add a benchmark against `sprintf`, `std::format`, and fmt's `FMT_COMPILE`.
+### Syntax and API
 
-### Gaps in the original to fix or decide on
+- The format string is a C++ class-type NTTP, `fixed_string<N>`, with no length cap.
+- There are two literal suffixes, one per syntax, each parsed by exactly one grammar.
+  `_fmt` is avoided because `std::` may claim it.
+  - `"{:#04x}"_bfmt` is brace syntax: `std::format`'s replacement-field grammar, i.e.
+    `{[arg-id][:[[fill]align][sign][#][0][width][.precision][type]]}` with `{{`/`}}` escapes.
+    Nested dynamic width/precision, chrono/range specs and `L` are deferred.
+  - `"0x%02X"_pfmt` is printf syntax plus boost-style `%N%`.
+- The literals live in `static_format::literals`.
+- Calls are eager:
+  - `"..."_pfmt(a, b, ...)` returns `std::string`.
+  - `.to(out_it, args...)` writes to an iterator.
+  - `.to_n(out_it, n, args...)` returns `{out, size}`, where `size` is the untruncated length.
+- `%` chaining is gone, and with it the lazy object and its dangling pointers.
+- Dozens of arguments must work, for tabular output of structural analysis data.
 
-- Centered alignment (`=`) is a TODO.
-- The flags `+`, `#`, and space are parsed but never applied.
-- The specifiers `A a C c F S` end a segment but have no handler, so using them fails to compile.
-- A repeated positional placeholder (`%1% %1%`) consumes two arguments.
-- An out-of-range positional index prints nothing and raises no error.
-- Stream state such as `hex` carries over from one segment to the next.
-- Storing the expression in `auto` leaves dangling pointers.
+### Parsing and expansion
 
-## Open questions
+- Parse with `constexpr` functions into a `constexpr` array of segment descriptors.
+- Expand over arguments with `std::index_sequence` and fold expressions.
+- Never recurse per segment or per argument. That keeps long strings and many arguments clear of
+  template-depth limits.
 
-- Brace-style `{}` syntax: Early sees no reason not to support it alongside printf syntax, but
-  wants to grill the exact syntax before implementing it.
+### printf-side type checking (compile time, `static_assert` naming argument index, specifier and type)
+
+| Specifier | Accepts |
+|---|---|
+| `d i` | any integral type except `bool` and the char types |
+| `u o x X` | any integral type; negatives are cast to unsigned, as printf does |
+| `f F e E g G a A` | floating-point types |
+| `c` | char types only (an `int` needs a cast) |
+| `s` | string-like: `char const*`, `std::string`, `std::string_view` |
+| `p` | pointers |
+| `v` | a user type through `std::formatter<T>`, else `operator<<`, else an error naming both |
+| `V` | a user type through `static_format::formatter<T>`, with an optional compile-time-parsed spec placed before the letter: `%[N$][flags][width][.precision][{spec}]V` |
+
+Further printf rules:
+
+- Length modifiers (`hh h l ll z j t L`) are accepted and ignored.
+- `C S` are compile errors that explain they are deprecated wide forms.
+- For `v` and `V`, width and `-` pad the output, precision truncates, and other flags are
+  errors. See ADR 0001.
+- Flags:
+  - `- + # space 0` have C semantics.
+  - Alignment extensions are `^` center, `=` internal, and `>` as explicit right-align.
+  - The original's `_` is dropped, and `=` no longer means center.
+- A repeated positional (`%1%`, `%1$s`) reuses its argument.
+- An out-of-range index, and mixing positional with sequential arguments, are compile errors.
+
+The brace side follows `std::format`'s type rules. For `{:spec}` on a user type it tries, in
+order:
+
+1. `static_format::formatter<T>`
+2. `std::formatter<T>`
+3. `operator<<`, only when the spec is empty
+
+`static_format::formatter<T>` provides:
+
+- `static constexpr Spec parse(std::string_view)`, where `Spec` is a structural type and an
+  invalid spec fails the build
+- a runtime `format(spec, out, value)`
+
+### Conversion, text and locale
+
+- Numbers are converted with `std::to_chars`; there are no iostreams.
+- Output is always "C"-locale.
+- Text is UTF-8 everywhere, in both syntaxes:
+  - Width counts display width.
+  - String precision never splits a code point.
+  - `to_n` stops at a code-point boundary.
+  - An ASCII fast path skips decoding, so there is no opt-out mode.
+  - MSVC builds with `/utf-8`. See ADR 0002.
+- Formatting at compile time (`constexpr` output) is out of scope.
+
+### Build, tests, CI
+
+- **Language and layout:**
+  - C++23.
+  - The library is a header-only CMake `INTERFACE` target.
+  - The single include is `include/static_format/static_format.hpp`, with internals under
+    `detail/`.
+  - CMake is used with strong reservations, and Claude maintains it. `c++/Makefile` wraps it,
+    and `c++` joins `LANGUAGES` in the root Makefile.
+- **Tests:**
+  - doctest, via a pinned `FetchContent`, for runtime tests.
+  - Plain `static_assert`s for parse-level checks.
+  - `tests/fail/` holds one-file compile-fail tests that pass only when stderr matches the
+    expected message.
+  - Stress tests cover a ~4 KB format string and ~64 arguments.
+- **CI:**
+  - `.github/workflows/cpp.yml` runs four jobs, path-filtered to `c++/**`: ubuntu/g++ and
+    ubuntu/clang++ (newest on the runner, pinned by name), macOS/Apple clang and windows/MSVC.
+  - MSVC needs `/std:c++23preview` until MSVC 14.52.
+  - Only the latest compilers matter; there is no documented floor.
+  - A feature is usable only if all four jobs compile it.
+  - Exercise `fixed_string` on all four jobs from the first commit.
+- **Benchmark:**
+  - `bench/` uses Google Benchmark against `snprintf`, `std::format_to` and fmt `FMT_COMPILE`,
+    with `_pfmt` and `_bfmt` writing into preallocated buffers, plus a `std::string` set.
+  - Workloads: `0x%02X`, `%8.3f`, a short mixed line, and a ~30-argument table row.
+  - `make bench` runs it locally, and CI only builds it.
+  - It is informational: results go in the package README, including any loss to
+    `FMT_COMPILE`.
 
 ## Prior art
 
@@ -64,6 +145,11 @@ These are in the `stdplus` repo, not this one:
 - `/home/earlye/Documents/gogs/earlye/stdplus/include/stdplus/strings/formattype/`: the
   original implementation.
 - `/home/earlye/Documents/gogs/earlye/stdplus/src/test/strings/test_format.cpp`: its tests.
+
+In this repo:
+
+- `c++/format/static-format/docs/adr/0001-printf-user-type-specifiers.md`
+- `c++/format/static-format/docs/adr/0002-utf8-width-and-truncation.md`
 
 ## Grill Log
 
