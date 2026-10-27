@@ -26,17 +26,17 @@ void put_fill(Sink& sink, fill_char const& fill, std::size_t n) {
   if (fill.size == 1) {
     sink.fill(fill.bytes[0], n);
   } else {
-    for (std::size_t i = 0; i < n; ++i) sink.put(std::string_view(fill.bytes, fill.size), text::utf8);
+    for (std::size_t i = 0; i < n; ++i) sink.put(std::string_view(fill.bytes, fill.size), charset::utf8);
   }
 }
 
 // Writes [prefix][zeros][body], padded to the field width. `prefix` (sign, base prefix) is
 // ASCII; `body_width` is the display width of `body`.
 template <field_spec Spec, align Default, class Sink>
-void put_padded(Sink& sink, std::string_view prefix, std::size_t zeros, std::string_view body, text kind,
+void put_padded(Sink& sink, std::string_view prefix, std::size_t zeros, std::string_view body, charset kind,
                 std::size_t body_width, bool zero_pad) {
   if constexpr (Spec.width == 0) {
-    sink.put(prefix, text::ascii);
+    sink.put(prefix, charset::ascii);
     sink.fill('0', zeros);
     sink.put(body, kind);
   } else {
@@ -58,7 +58,7 @@ void put_padded(Sink& sink, std::string_view prefix, std::size_t zeros, std::str
       before = pad;
     }
     put_fill(sink, Spec.fill, before);
-    sink.put(prefix, text::ascii);
+    sink.put(prefix, charset::ascii);
     put_fill(sink, Spec.fill, inside);
     sink.fill('0', zeros);
     sink.put(body, kind);
@@ -70,12 +70,12 @@ void put_padded(Sink& sink, std::string_view prefix, std::size_t zeros, std::str
 template <field_spec Spec, bool Numeric>
 inline constexpr align default_align = Spec.syn == syntax::printf || Numeric ? align::right : align::left;
 
-template <field_spec Spec, text Kind, class Sink>
+template <field_spec Spec, charset Kind, class Sink>
 void write_text(Sink& sink, std::string_view s) {
   constexpr align fallback = default_align<Spec, false>;
   if constexpr (Spec.width == 0 && Spec.precision == no_precision) {
     sink.put(s, Kind);
-  } else if constexpr (Kind == text::ascii) {
+  } else if constexpr (Kind == charset::ascii) {
     // A copy: clang 21 miscompiles std::min given a reference into the template parameter object.
     constexpr std::size_t precision = Spec.precision;
     if constexpr (precision != no_precision) s = s.substr(0, std::min(precision, s.size()));
@@ -93,7 +93,7 @@ void write_char(Sink& sink, C c) {
   constexpr align fallback = default_align<Spec, false>;
   if constexpr (sizeof(C) == 1) {
     char const byte = static_cast<char>(c);
-    put_padded<Spec, fallback>(sink, {}, 0, std::string_view(&byte, 1), text::ascii, 1, false);
+    put_padded<Spec, fallback>(sink, {}, 0, std::string_view(&byte, 1), charset::ascii, 1, false);
   } else {
     auto cp = static_cast<char32_t>(c);
     if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = U'\uFFFD';
@@ -110,7 +110,7 @@ void write_char(Sink& sink, C c) {
       bytes[0] = unit(0xF0 | (cp >> 18)), bytes[1] = unit(0x80 | ((cp >> 12) & 0x3F));
       bytes[2] = unit(0x80 | ((cp >> 6) & 0x3F)), bytes[3] = unit(0x80 | (cp & 0x3F)), n = 4;
     }
-    put_padded<Spec, fallback>(sink, {}, 0, std::string_view(bytes, n), text::utf8, unicode::code_point_width(cp), false);
+    put_padded<Spec, fallback>(sink, {}, 0, std::string_view(bytes, n), charset::utf8, unicode::code_point_width(cp), false);
   }
 }
 
@@ -181,7 +181,7 @@ void write_integer(Sink& sink, T value) {
                                          (Spec.alignment == align::none || Spec.alignment == align::right ||
                                           Spec.alignment == align::internal)
                                    : Spec.zero && Spec.alignment == align::none;
-  put_padded<Spec, align::right>(sink, std::string_view(prefix, prefix_size), zeros, digits, text::ascii, digits.size(),
+  put_padded<Spec, align::right>(sink, std::string_view(prefix, prefix_size), zeros, digits, charset::ascii, digits.size(),
                                  zero_pad);
 }
 
@@ -231,7 +231,7 @@ void write_float(Sink& sink, F value) {
 
   if (!std::isfinite(value)) {
     std::string_view const body = std::isnan(value) ? (upper ? "NAN" : "nan") : (upper ? "INF" : "inf");
-    put_padded<Spec, align::right>(sink, std::string_view(prefix, prefix_size), 0, body, text::ascii, body.size(), false);
+    put_padded<Spec, align::right>(sink, std::string_view(prefix, prefix_size), 0, body, charset::ascii, body.size(), false);
     return;
   }
 
@@ -296,7 +296,7 @@ void write_float(Sink& sink, F value) {
 
   constexpr bool zero_pad =
       printf ? Spec.zero && Spec.alignment != align::left && Spec.alignment != align::center : Spec.zero && Spec.alignment == align::none;
-  put_padded<Spec, align::right>(sink, std::string_view(prefix, prefix_size), 0, std::string_view(out, size), text::ascii, size,
+  put_padded<Spec, align::right>(sink, std::string_view(prefix, prefix_size), 0, std::string_view(out, size), charset::ascii, size,
                                  zero_pad);
 }
 
@@ -305,7 +305,7 @@ void write_pointer(Sink& sink, std::uintptr_t address) {
   char buffer[sizeof address * 2];
   auto const end = std::to_chars(buffer, buffer + sizeof buffer, address, 16).ptr;
   std::string_view const digits(buffer, static_cast<std::size_t>(end - buffer));
-  put_padded<Spec, align::right>(sink, "0x", 0, digits, text::ascii, digits.size(), false);
+  put_padded<Spec, align::right>(sink, "0x", 0, digits, charset::ascii, digits.size(), false);
 }
 
 }  // namespace eaux::text::static_format::detail

@@ -50,7 +50,7 @@ void write_produced(Sink& sink, Produce&& produce) {
   } else {
     std::string text;
     produce(std::back_inserter(text));
-    write_text<Spec, text::utf8>(sink, text);
+    write_text<Spec, charset::utf8>(sink, text);
   }
 }
 
@@ -74,7 +74,7 @@ void write_printf(Sink& sink, T const& value) {
   } else if constexpr (conversion == 'c') {
     write_char<Spec>(sink, value);
   } else if constexpr (conversion == 's') {
-    constexpr text kind = std::is_same_v<std::remove_cv_t<T>, ascii_string_view> ? text::ascii : text::utf8;
+    constexpr charset kind = std::is_same_v<std::remove_cv_t<T>, ascii_string_view> ? charset::ascii : charset::utf8;
     write_text<Spec, kind>(sink, as_string_view(value));
   } else if constexpr (conversion == 'p') {
     if constexpr (std::is_null_pointer_v<T>) {
@@ -102,7 +102,7 @@ void write_brace_builtin(Sink& sink, T const& value) {
   constexpr char type = Spec.conversion;
   if constexpr (boolean<T>) {
     if constexpr (type == 0 || type == 's') {
-      write_text<Spec, text::ascii>(sink, value ? "true" : "false");
+      write_text<Spec, charset::ascii>(sink, value ? "true" : "false");
     } else if constexpr (type == 'c') {
       write_char<Spec>(sink, static_cast<char>(value));
     } else {
@@ -129,7 +129,7 @@ void write_brace_builtin(Sink& sink, T const& value) {
       write_pointer<Spec>(sink, reinterpret_cast<std::uintptr_t>(value));
     }
   } else {
-    constexpr text kind = std::is_same_v<std::remove_cv_t<T>, ascii_string_view> ? text::ascii : text::utf8;
+    constexpr charset kind = std::is_same_v<std::remove_cv_t<T>, ascii_string_view> ? charset::ascii : charset::utf8;
     write_text<Spec, kind>(sink, as_string_view(value));
   }
 }

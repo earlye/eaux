@@ -14,13 +14,13 @@
 // truncating sink knows whether any cut is valid or it must find a grapheme boundary.
 namespace eaux::text::static_format::detail {
 
-enum class text : unsigned char { ascii, utf8 };
+enum class charset : unsigned char { ascii, utf8 };
 
 struct pointer_sink {
   static constexpr bool truncating = false;
   char* out;
 
-  void put(std::string_view s, text = text::ascii) noexcept {
+  void put(std::string_view s, charset = charset::ascii) noexcept {
     if (!s.empty()) std::memcpy(out, s.data(), s.size());
     out += s.size();
   }
@@ -36,7 +36,7 @@ struct iterator_sink {
   static constexpr bool truncating = false;
   Out out;
 
-  void put(std::string_view s, text = text::ascii) { out = std::copy(s.begin(), s.end(), std::move(out)); }
+  void put(std::string_view s, charset = charset::ascii) { out = std::copy(s.begin(), s.end(), std::move(out)); }
   void put(char c) { *out++ = c; }
   void fill(char c, std::size_t n) { out = std::fill_n(std::move(out), n, c); }
 };
@@ -47,7 +47,7 @@ class string_sink {
  public:
   static constexpr bool truncating = false;
 
-  void put(std::string_view s, text = text::ascii) {
+  void put(std::string_view s, charset = charset::ascii) {
     if (!spilled_ && s.size() <= sizeof buffer_ - size_) {
       if (!s.empty()) std::memcpy(buffer_ + size_, s.data(), s.size());
       size_ += s.size();
@@ -93,7 +93,7 @@ struct truncating_sink {
   std::size_t total = 0;
   bool full = false;
 
-  void put(std::string_view s, text kind = text::ascii) {
+  void put(std::string_view s, charset kind = charset::ascii) {
     total += s.size();
     if (full) return;
     if (s.size() <= room) {
@@ -101,7 +101,7 @@ struct truncating_sink {
       room -= s.size();
       return;
     }
-    inner.put(s.substr(0, kind == text::ascii ? room : unicode::byte_prefix(s, room)), kind);
+    inner.put(s.substr(0, kind == charset::ascii ? room : unicode::byte_prefix(s, room)), kind);
     full = true;
   }
   // A literal whose cluster ends were computed at compile time.
@@ -109,12 +109,12 @@ struct truncating_sink {
     total += s.size();
     if (full) return;
     if (s.size() <= room) {
-      inner.put(s, text::utf8);
+      inner.put(s, charset::utf8);
       room -= s.size();
       return;
     }
     auto const fits = std::upper_bound(ends.begin(), ends.end(), room);
-    inner.put(s.substr(0, fits == ends.begin() ? 0 : *std::prev(fits)), text::utf8);
+    inner.put(s.substr(0, fits == ends.begin() ? 0 : *std::prev(fits)), charset::utf8);
     full = true;
   }
   void put(char c) {

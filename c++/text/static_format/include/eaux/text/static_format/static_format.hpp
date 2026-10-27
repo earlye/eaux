@@ -127,11 +127,11 @@ class compiled_format {
     if constexpr (seg.kind == detail::segment_kind::literal) {
       constexpr std::string_view text(parsed.text + seg.begin, seg.size);
       if constexpr (seg.ascii) {
-        sink.put(text, detail::text::ascii);
+        sink.put(text, detail::charset::ascii);
       } else if constexpr (Sink::truncating) {
         sink.put(text, std::span<std::size_t const>(literal_ends<I>));
       } else {
-        sink.put(text, detail::text::utf8);
+        sink.put(text, detail::charset::utf8);
       }
     } else {
       using T = detail::type_at<seg.arg, Args...>;
@@ -148,6 +148,14 @@ struct invalid_format {
   template <class... Args>
   std::string operator()(Args const&...) const {
     return {};
+  }
+  template <class Out, class... Args>
+  Out to(Out out, Args const&...) const {
+    return out;
+  }
+  template <class Out, class... Args>
+  std::format_to_n_result<Out> to_n(Out out, std::iter_difference_t<Out>, Args const&...) const {
+    return {out, 0};
   }
 };
 
