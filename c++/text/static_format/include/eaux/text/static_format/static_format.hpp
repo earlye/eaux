@@ -26,7 +26,6 @@
 #include <cstring>
 #include <format>
 #include <iterator>
-#include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -89,23 +88,22 @@ class compiled_format {
   template <class Sink, class... Args>
   static void render(Sink& sink, Args const&... args) {
     if constexpr (detail::argument_count<Syn, arguments, sizeof...(Args)>()) {
-      [[maybe_unused]] void const* const pointers[] = {static_cast<void const*>(std::addressof(args))..., nullptr};
+      detail::argument_pack<std::index_sequence_for<Args...>, Args...> const pack{{args}...};
       [&]<std::size_t... I>(std::index_sequence<I...>) {
-        (emit<I, Args...>(sink, pointers), ...);
+        (emit<I>(sink, pack), ...);
       }(std::make_index_sequence<info.segments>{});
     }
   }
 
-  template <std::size_t I, class... Args, class Sink>
-  static void emit(Sink& sink, [[maybe_unused]] void const* const* pointers) {
+  template <std::size_t I, class Sink, class Pack>
+  static void emit(Sink& sink, [[maybe_unused]] Pack const& pack) {
     constexpr detail::segment seg = parsed.segments[I];
     if constexpr (seg.kind == detail::segment_kind::literal) {
       sink.put(std::string_view(parsed.text + seg.begin, seg.size));
     } else {
-      using T = detail::type_at<seg.arg, Args...>;
       detail::write_argument<detail::without_offsets(seg.spec), seg.arg,
                              detail::substring<S, seg.spec.raw_begin, seg.spec.raw_size>()>(
-          sink, *static_cast<T const*>(pointers[seg.arg]));
+          sink, detail::pick<seg.arg>(pack));
     }
   }
 };

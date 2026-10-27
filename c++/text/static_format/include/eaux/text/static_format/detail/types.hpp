@@ -31,19 +31,21 @@ struct formatter {
 
 namespace detail {
 
-// Non-recursive pack indexing, so dozens of arguments cost no template depth.
-template <std::size_t I, class T>
-struct indexed {
-  using type = T;
+// The arguments of one call, each reachable by index without recursion and without naming its
+// type through an alias: pick<J> deduces T from the matching base, so diagnostics spell the
+// argument's real type (MSVC prints an alias by the alias's own name).
+template <std::size_t J, class T>
+struct slot {
+  T const& value;
 };
 template <class Sequence, class... T>
-struct index_table;
-template <std::size_t... I, class... T>
-struct index_table<std::index_sequence<I...>, T...> : indexed<I, T>... {};
-template <std::size_t I, class T>
-indexed<I, T> select(indexed<I, T> const&);
-template <std::size_t I, class... T>
-using type_at = typename decltype(select<I>(std::declval<index_table<std::index_sequence_for<T...>, T...> const&>()))::type;
+struct argument_pack;
+template <std::size_t... J, class... T>
+struct argument_pack<std::index_sequence<J...>, T...> : slot<J, T>... {};
+template <std::size_t J, class T>
+constexpr T const& pick(slot<J, T> const& s) noexcept {
+  return s.value;
+}
 
 template <class T, class... U>
 concept one_of = (std::same_as<T, U> || ...);
