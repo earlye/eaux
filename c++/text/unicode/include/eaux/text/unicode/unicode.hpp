@@ -93,8 +93,8 @@ constexpr decoded decode(std::string_view s, std::size_t pos) noexcept {
 }
 
 // Offset of the first byte >= 0x80, or s.size() when the string is ASCII. At run time this ORs
-// whole words together so the compiler can vectorize it; only the final partial word is scanned
-// bytewise.
+// whole words together so the compiler can vectorize it; the bytewise loop only locates the first
+// high byte within its word, or scans the final partial word.
 constexpr std::size_t ascii_prefix(std::string_view s) noexcept {
   std::size_t i = 0;
   if !consteval {
@@ -118,6 +118,13 @@ constexpr std::size_t ascii_prefix(std::string_view s) noexcept {
 }
 
 constexpr bool is_ascii(std::string_view s) noexcept { return ascii_prefix(s) == s.size(); }
+
+// Where to cut ASCII text to keep at most `n` bytes. Every boundary between two ASCII bytes is a
+// grapheme cluster boundary except inside CR LF, so this is `n` unless that separates the pair.
+constexpr std::size_t ascii_cut(std::string_view s, std::size_t n) noexcept {
+  if (n >= s.size()) return s.size();
+  return n > 0 && s[n - 1] == '\r' && s[n] == '\n' ? n - 1 : n;
+}
 
 // End of the extended grapheme cluster (UAX #29) that starts at byte `pos`.
 constexpr std::size_t next_grapheme_break(std::string_view s, std::size_t pos) noexcept {
@@ -217,8 +224,7 @@ struct prefix {
 constexpr prefix width_prefix(std::string_view s, std::size_t max_width) noexcept {
   std::size_t const ascii = ascii_prefix(s);
   if (ascii == s.size() || ascii > max_width) {
-    std::size_t n = max_width < s.size() ? max_width : s.size();
-    if (n > 0 && n < s.size() && s[n - 1] == '\r' && s[n] == '\n') --n;  // CR LF is one cluster
+    std::size_t const n = ascii_cut(s, max_width);
     return {n, n};
   }
   std::size_t pos = ascii == 0 ? 0 : ascii - 1;
@@ -237,10 +243,7 @@ constexpr prefix width_prefix(std::string_view s, std::size_t max_width) noexcep
 constexpr std::size_t byte_prefix(std::string_view s, std::size_t max_bytes) noexcept {
   if (max_bytes >= s.size()) return s.size();
   std::size_t const ascii = ascii_prefix(s);
-  if (ascii > max_bytes) {
-    // Every boundary between two ASCII bytes is a cluster boundary except inside CR LF.
-    return max_bytes > 0 && s[max_bytes - 1] == '\r' && s[max_bytes] == '\n' ? max_bytes - 1 : max_bytes;
-  }
+  if (ascii > max_bytes) return ascii_cut(s, max_bytes);
   std::size_t pos = ascii == 0 ? 0 : ascii - 1;
   while (pos < s.size()) {
     std::size_t const end = next_grapheme_break(s, pos);

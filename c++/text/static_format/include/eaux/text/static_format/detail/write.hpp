@@ -5,6 +5,7 @@
 #include <eaux/text/unicode/unicode.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <charconv>
 #include <cmath>
 #include <concepts>
@@ -96,13 +97,7 @@ void write_text(Sink& sink, std::string_view s) {
   if constexpr (Spec.width == 0 && Spec.precision == no_precision) {
     sink.put(s);
   } else if constexpr (Ascii) {
-    // A copy: clang 21 miscompiles std::min given a reference into the template parameter object.
-    constexpr std::size_t precision = Spec.precision;
-    if constexpr (precision != no_precision) {
-      std::size_t n = std::min(precision, s.size());
-      if (n > 0 && n < s.size() && s[n - 1] == '\r' && s[n] == '\n') --n;  // CR LF is one cluster
-      s = s.substr(0, n);
-    }
+    if constexpr (Spec.precision != no_precision) s = s.substr(0, unicode::ascii_cut(s, Spec.precision));
     put_padded<Spec, fallback>(sink, {}, {}, 0, s, s.size(), false);
   } else if constexpr (Spec.precision != no_precision) {
     auto const fits = unicode::width_prefix(s, Spec.precision);
@@ -292,6 +287,7 @@ void write_float(Sink& sink, F value) {
     large.resize((shortest ? 0 : precision) + std::numeric_limits<F>::max_exponent10 + 32);
     out = large.data();
     size = render(out, large.size() - 1);
+    assert(size != 0 && "the heap buffer holds any conversion: precision plus max_exponent10 integral digits");
   }
   if constexpr (upper) to_upper(out, out + size);
 

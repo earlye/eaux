@@ -31,6 +31,10 @@ static_assert(u::display_width("abc") == 3);
 static_assert(u::display_width("\u4E2D\u6587") == 4);
 static_assert(u::next_grapheme_break("e\u0301x", 0) == 3);
 static_assert(u::byte_prefix("\u4E2D\u6587", 4) == 3);
+static_assert(u::ascii_cut("abcd", 2) == 2);
+static_assert(u::ascii_cut("ab\r\n", 3) == 2);
+static_assert(u::ascii_cut("ab\r\n", 4) == 4);
+static_assert(u::ascii_cut("ab", 9) == 2);
 
 TEST_CASE("decode") {
   CHECK(u::decode("A", 0).code_point == U'A');

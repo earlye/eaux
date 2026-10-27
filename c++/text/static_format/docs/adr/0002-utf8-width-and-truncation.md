@@ -11,7 +11,7 @@ character.
 A cluster can span a literal and an argument (`"e%s"` with a combining accent), so `to_n`
 formats the whole output, which it must measure anyway for the untruncated size, and cuts that
 at the last cluster boundary that fits. Runtime strings are scanned up front for any byte >= 0x80,
-a branch-free word-wise OR that the compiler can vectorize. ASCII strings take a fast path where
+a word-wise OR, 32 bytes per branch, that the compiler can vectorize. ASCII strings take a fast path where
 length equals width and any cut is valid except between CR and LF. Only non-ASCII strings walk
 graphemes. Malformed UTF-8 passes through unchanged.
 `eaux::text::ascii_string_view` is a validated type that carries the ASCII guarantee: it validates once at
