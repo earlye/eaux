@@ -137,3 +137,10 @@ These are in the `stdplus` repo, not this one:
   `std::expected`, float `to_chars` with precision and class-type NTTPs available on all current
   runners. Clang doesn't bump `__cpp_nontype_template_args`, so don't gate on it. Exercise
   `fixed_string` on all four jobs from the first commit, since older MSVC reportedly had ICEs with it.
+- Q: Benchmark shape? — A: Google Benchmark via pinned `FetchContent`. Contenders: `snprintf`
+  into a stack buffer, `std::format_to`, fmt `format_to` with `FMT_COMPILE`, `_pfmt.to`,
+  `_bfmt.to`, all into preallocated buffers, plus a `std::string`-returning set. Workloads: `0x%02X`,
+  `%8.3f`, a short mixed string/int line, and a ~30-argument table row (mostly `%10.4f` plus
+  labels). `make bench` runs it locally; CI only builds it on all four jobs. Informational, with no
+  pass/fail bar; results go in the package README with machine and compiler, including any loss
+  to `FMT_COMPILE`. The original formattype is not vendored as a baseline.
