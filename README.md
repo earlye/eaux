@@ -17,6 +17,9 @@ For example:
 
 go/paths/UserDirectory/
 rust/ipc/app-agent/
+c++/text/static_format/
 
-Run `make` at the root to build and test every language tree (`go/` and
-`rust/`). Each library has its own README, Makefile and MIT license.
+Run `make` at the root to build and test every language tree (`go/`,
+`rust/` and `c++/`). Each library has its own README and MIT license, and
+its own Makefile except in `c++/`, where one Makefile drives a single CMake
+build of the whole tree.

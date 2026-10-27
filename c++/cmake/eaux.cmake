@@ -3,7 +3,7 @@
 # Flags for code this build compiles itself (tests, benchmarks), not for consumers.
 function(eaux_target_warnings target)
   if(MSVC)
-    target_compile_options(${target} PRIVATE /W4 /permissive- /Zc:__cplusplus /bigobj)
+    target_compile_options(${target} PRIVATE /W4 /permissive- /Zc:__cplusplus /Zc:preprocessor /bigobj)
     if(EAUX_WARNINGS_AS_ERRORS)
       target_compile_options(${target} PRIVATE /WX)
     endif()

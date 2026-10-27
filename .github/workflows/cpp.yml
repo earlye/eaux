@@ -1,0 +1,50 @@
+name: cpp
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "c++/**"
+      - ".github/workflows/cpp.yml"
+  pull_request:
+    paths:
+      - "c++/**"
+      - ".github/workflows/cpp.yml"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu g++-14
+            os: ubuntu-24.04
+            cmake_args: -DCMAKE_CXX_COMPILER=g++-14 -DEAUX_WARNINGS_AS_ERRORS=ON
+          # libc++ rather than libstdc++: clang 18 reports __cpp_concepts below what
+          # libstdc++'s <expected> requires.
+          - name: ubuntu clang++-18
+            os: ubuntu-24.04
+            packages: libc++-18-dev libc++abi-18-dev
+            cmake_args: -DCMAKE_CXX_COMPILER=clang++-18 -DCMAKE_CXX_FLAGS=-stdlib=libc++ -DEAUX_WARNINGS_AS_ERRORS=ON
+          - name: macos Apple clang
+            os: macos-latest
+            cmake_args: -DEAUX_WARNINGS_AS_ERRORS=ON
+          - name: windows MSVC
+            os: windows-latest
+            cmake_args: ""
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: c++
+    steps:
+      - uses: actions/checkout@v4
+      - name: install
+        if: matrix.packages
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.packages }}
+      - name: configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEAUX_BUILD_BENCH=ON ${{ matrix.cmake_args }}
+      - name: build
+        run: cmake --build build --config Release --parallel 4
+      - name: test
+        run: ctest --test-dir build -C Release --output-on-failure --parallel 4

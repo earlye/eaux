@@ -2,7 +2,7 @@
 # builds and tests everything in it, so `make`, `make build` and `make test`
 # all do the full run. Any other goal (e.g. `make clean`) is forwarded to
 # every tree as-is.
-LANGUAGES := go rust
+LANGUAGES := go rust c++
 .DEFAULT_GOAL := build
 
 .PHONY: all build test $(LANGUAGES)
