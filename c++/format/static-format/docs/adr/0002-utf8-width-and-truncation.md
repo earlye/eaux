@@ -1,15 +1,26 @@
-# Width, precision and `to_n` are UTF-8 aware in both syntaxes
+# Width, precision and `to_n` are grapheme-aware UTF-8 in both syntaxes
 
-All text is treated as UTF-8. Field width counts display width (by `std::format`'s rules),
-string precision counts display width without splitting a code point, and `to_n` stops at the
-last complete code point that fits while still returning the untruncated size. This applies to
+All text is treated as UTF-8, and the unit of truncation and width is the extended grapheme
+cluster (UAX #29), as in `std::format`. Field width counts display width (the standard's
+wide-character ranges count 2). String precision never splits a grapheme. `to_n` stops at the
+last complete grapheme that fits while still returning the untruncated size. This applies to
 `_pfmt` too, deliberately departing from C `printf`'s byte counting, so that tabular output with
-labels like `µ` or `σ_max` stays column-aligned. ASCII-only text behaves exactly like byte
-counting, so there is no opt-out mode; an all-bytes-below-0x80 fast path skips decoding. The build
-assumes UTF-8 source and literal encoding (`/utf-8` on MSVC).
+labels like `µ`, `σ_max` or a combining accent stays column-aligned and never loses part of a
+character.
+
+Literal segments are classified as ASCII or UTF-8 at compile time; UTF-8 literals carry
+precomputed grapheme boundaries, so clamping one is a table lookup. Runtime strings are scanned
+up front for any byte >= 0x80, a branch-free word-wise OR that the compiler can vectorize. ASCII
+strings take a fast path where length equals width and any cut is valid. Only non-ASCII strings
+walk graphemes. Malformed UTF-8 passes through unchanged. Unicode property tables are generated
+by a script in the package into a checked-in header, pinned to one Unicode version, and tested
+against `GraphemeBreakTest.txt`. The build assumes UTF-8 source and literal encoding (`/utf-8`
+on MSVC).
 
 ## Considered Options
 
 - Byte counting in `_pfmt` for exact `sprintf` fidelity, Unicode awareness only in `_bfmt`.
   Rejected: columns misalign as soon as a label leaves ASCII.
+- Code-point granularity with no tables. Rejected: a cut can drop a combining accent and leave
+  the wrong letter.
 - A switch for a single-byte mode. Rejected as redundant with the ASCII fast path.
