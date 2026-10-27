@@ -5,6 +5,7 @@
 #include <format>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 using eaux::text::ascii_string_view;
 using namespace eaux::text::literals;
@@ -18,6 +19,11 @@ static_assert(ascii_string_view::from("caf\xc3\xa9").error() == 3);
 static_assert(ascii_string_view::from("\x80").error() == 0);
 static_assert("abc"_ascii < "abd"_ascii);
 static_assert("hello"_ascii.substr(1, 3) == "ell"_ascii);
+static_assert("abc"_ascii == "abc");
+static_assert("abc" == "abc"_ascii);
+static_assert("abc"_ascii != "abd"sv);
+static_assert("abc"_ascii < "abd"sv);
+static_assert("abd" > "abc"_ascii);
 
 TEST_CASE("from accepts ASCII and reports the first non-ASCII byte") {
   std::string const ok = "plain text, punctuation & digits 0123\t\n\x7f";
@@ -50,4 +56,14 @@ TEST_CASE("std::format uses the string_view formatter") {
   CHECK(std::format("[{}]", "id"_ascii) == "[id]");
   CHECK(std::format("[{:>6}]", "id"_ascii) == "[    id]");
   CHECK(std::format("[{:*^7.3}]", "column"_ascii) == "[**col**]");
+}
+
+TEST_CASE("hashes like its string_view, so it can key unordered containers") {
+  CHECK(std::hash<ascii_string_view>{}("key"_ascii) == std::hash<std::string_view>{}("key"));
+  std::unordered_map<ascii_string_view, int> counts;
+  ++counts["a"_ascii];
+  ++counts["a"_ascii];
+  ++counts["b"_ascii];
+  CHECK(counts.at("a"_ascii) == 2);
+  CHECK(counts.size() == 2);
 }

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <ranges>
 #include <string_view>
 
 namespace eaux::text::unicode {
@@ -249,12 +250,16 @@ constexpr std::size_t byte_prefix(std::string_view s, std::size_t max_bytes) noe
   return pos;
 }
 
-// A forward range over the extended grapheme clusters of a string, each as a string_view.
-class graphemes {
+// A view over the extended grapheme clusters of a string, each as a string_view. It only refers
+// to the text, so it is a borrowed range: iterators outlive the view object.
+class graphemes : public std::ranges::view_interface<graphemes> {
  public:
   class iterator {
    public:
-    using iterator_category = std::forward_iterator_tag;
+    // A forward iterator in C++20 terms; its operator* returns by value, which the older
+    // iterator categories count only as input.
+    using iterator_concept = std::forward_iterator_tag;
+    using iterator_category = std::input_iterator_tag;
     using value_type = std::string_view;
     using difference_type = std::ptrdiff_t;
     using pointer = void;
@@ -284,6 +289,7 @@ class graphemes {
     std::size_t end_ = 0;
   };
 
+  constexpr graphemes() noexcept = default;
   constexpr explicit graphemes(std::string_view text) noexcept : text_(text) {}
   constexpr iterator begin() const noexcept { return {text_, 0}; }
   constexpr iterator end() const noexcept { return {text_, text_.size()}; }
@@ -293,3 +299,6 @@ class graphemes {
 };
 
 }  // namespace eaux::text::unicode
+
+template <>
+inline constexpr bool std::ranges::enable_borrowed_range<eaux::text::unicode::graphemes> = true;

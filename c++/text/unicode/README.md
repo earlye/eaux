@@ -15,7 +15,7 @@ u::display_width("中文");           // 4: East Asian wide characters count 2
 u::width_prefix("ééé", 2); // {size: 6, width: 2}: never splits a cluster
 u::byte_prefix(label, 16);                   // longest whole-cluster prefix within 16 bytes
 u::ascii_prefix(s);                          // offset of the first byte >= 0x80
-for (std::string_view g : u::graphemes(s)) { /* one cluster at a time */ }
+for (std::string_view g : u::graphemes(s)) { /* one cluster at a time; a borrowed view */ }
 ```
 
 Width is the sum, over clusters, of the width of each cluster's first code point: 2 for
@@ -32,5 +32,6 @@ byte counts as one U+FFFD.
 python3 scripts/generate_tables.py --version 19.0.0
 ```
 
-It downloads the UCD files to a temporary directory (or `--cache DIR`), rewrites the header,
-and refreshes `tests/data/GraphemeBreakTest.txt`, which the tests run in full.
+It downloads the UCD files to a temporary directory (or to `DIR/<version>` with `--cache DIR`),
+refuses any file that declares a different version, rewrites the header, and refreshes
+`tests/data/GraphemeBreakTest.txt`, which the tests run in full.

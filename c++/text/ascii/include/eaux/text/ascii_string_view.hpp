@@ -51,6 +51,10 @@ class ascii_string_view {
   friend constexpr std::strong_ordering operator<=>(ascii_string_view a, ascii_string_view b) noexcept {
     return a.view_ <=> b.view_;
   }
+  friend constexpr bool operator==(ascii_string_view a, std::string_view b) noexcept { return a.view_ == b; }
+  friend constexpr std::strong_ordering operator<=>(ascii_string_view a, std::string_view b) noexcept {
+    return a.view_ <=> b;
+  }
 
  private:
   friend struct detail::ascii_literal;
@@ -79,6 +83,11 @@ consteval ascii_string_view operator""_ascii(char const* s, std::size_t n) { ret
 }  // namespace literals
 
 }  // namespace eaux::text
+
+template <>
+struct std::hash<eaux::text::ascii_string_view> {
+  std::size_t operator()(eaux::text::ascii_string_view s) const noexcept { return std::hash<std::string_view>{}(s.view()); }
+};
 
 template <>
 struct std::formatter<eaux::text::ascii_string_view, char> : std::formatter<std::string_view, char> {

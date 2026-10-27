@@ -40,7 +40,24 @@ MAX = 0x110000
 LINE = re.compile(r"^([0-9A-F]+)(?:\.\.([0-9A-F]+))?\s*;\s*([^#;]+?)\s*(?:;\s*([^#]+?)\s*)?(?:#.*)?$")
 
 
+def file_version(path):
+    """The Unicode version a UCD file declares: in its "# Name-X.Y.Z.txt" first line, or, for
+    emoji-data.txt, in a "# Version: X.Y.Z" line."""
+    lines = path.read_text(encoding="utf-8").splitlines()[:16]
+    named = re.match(r"# \S+-(\d+\.\d+\.\d+)\.txt$", lines[0])
+    if named:
+        return named.group(1)
+    for line in lines:
+        declared = re.match(r"# Version: (\d+\.\d+\.\d+)$", line)
+        if declared:
+            return declared.group(1)
+    return None
+
+
 def fetch(version, cache):
+    """Downloads into cache/<version>, so files from different versions never mix, and checks that
+    every file declares exactly that version."""
+    cache = cache / version
     cache.mkdir(parents=True, exist_ok=True)
     base = f"https://www.unicode.org/Public/{version}/ucd/"
     for name, path in FILES.items():
@@ -48,9 +65,10 @@ def fetch(version, cache):
         if not target.exists():
             with urllib.request.urlopen(base + path) as response:
                 target.write_bytes(response.read())
-    header = (cache / "GraphemeBreakTest.txt").read_text(encoding="utf-8").splitlines()[0]
-    if version not in header:
-        raise SystemExit(f"cache {cache} holds {header!r}, not version {version}")
+        found = file_version(target)
+        if found != version:
+            raise SystemExit(f"{target} declares Unicode {found}, not {version}")
+    return cache
 
 
 def records(path):
@@ -155,8 +173,7 @@ def main():
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory() as scratch:
-        cache = args.cache or pathlib.Path(scratch)
-        fetch(args.version, cache)
+        cache = fetch(args.version, args.cache or pathlib.Path(scratch))
         emit(args.version, build(cache))
         TEST_DATA.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(cache / "GraphemeBreakTest.txt", TEST_DATA)

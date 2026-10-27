@@ -2,6 +2,8 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -10,6 +12,10 @@ namespace u = eaux::text::unicode;
 using namespace std::string_view_literals;
 
 static_assert(u::version == "18.0.0");
+static_assert(std::ranges::view<u::graphemes>);
+static_assert(std::ranges::forward_range<u::graphemes>);
+static_assert(std::ranges::borrowed_range<u::graphemes>);
+static_assert(std::forward_iterator<u::graphemes::iterator>);
 static_assert(u::grapheme_break_property(U'\r') == u::grapheme_break::cr);
 static_assert(u::grapheme_break_property(U'\u0301') == u::grapheme_break::extend);
 static_assert(u::grapheme_break_property(U'\u200D') == u::grapheme_break::zwj);
@@ -112,4 +118,15 @@ TEST_CASE("graphemes iterates clusters") {
   std::vector<std::string_view> parts;
   for (auto g : u::graphemes("ae\u0301\U0001F1FA\U0001F1F8\r\n")) parts.push_back(g);
   CHECK(parts == std::vector<std::string_view>{"a", "e\u0301", "\U0001F1FA\U0001F1F8", "\r\n"});
+}
+
+TEST_CASE("graphemes composes with std::views and std::ranges") {
+  std::vector<std::string_view> firsts;
+  for (auto g : u::graphemes("ae\u0301\U0001F600z") | std::views::take(2)) firsts.push_back(g);
+  CHECK(firsts == std::vector<std::string_view>{"a", "e\u0301"});
+  CHECK(std::ranges::distance(u::graphemes("ae\u0301\U0001F600z")) == 4);
+  // A borrowed range: the iterator from a temporary view is usable.
+  auto const it = std::ranges::find(u::graphemes("ae\u0301z"), std::string_view("e\u0301"));
+  CHECK(*it == "e\u0301");
+  CHECK(u::graphemes("").empty());
 }
