@@ -144,3 +144,14 @@ These are in the `stdplus` repo, not this one:
   labels). `make bench` runs it locally; CI only builds it on all four jobs. Informational, with no
   pass/fail bar; results go in the package README with machine and compiler, including any loss
   to `FMT_COMPILE`. The original formattype is not vendored as a baseline.
+- Q: Package layout, names and output limits? — A:
+  `c++/format/static-format/include/static_format/static_format.hpp` as the single include, with
+  internals under `detail/`; `tests/`, `tests/fail/`, `bench/`, `docs/adr/` beside it. Namespace
+  `static_format`; the literal operators live in `static_format::literals`. `.to_n(it, n,
+  args...)` mirrors `std::format_to_n` and returns `{out, size}`, `size` being the untruncated
+  length. No locale support: output is always "C"-locale. Formatting at compile time (`constexpr`
+  output) is out of scope for now.
+- Q: How do the byte limits treat UTF-8? — A: UTF-8 everywhere, both syntaxes: width counts
+  display width, string precision never splits a code point, `to_n` stops at a code-point
+  boundary. No single-byte opt-out, since ASCII is byte-identical in UTF-8 and gets a fast path.
+  MSVC builds with `/utf-8`. See `c++/format/static-format/docs/adr/0002-utf8-width-and-truncation.md`.
