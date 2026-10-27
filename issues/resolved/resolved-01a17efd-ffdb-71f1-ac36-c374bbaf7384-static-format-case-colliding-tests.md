@@ -28,3 +28,14 @@ new collision from being added.
 - `c++/cmake/eaux.cmake:42-64`: `eaux_compile_fail_tests`, which turns each file stem into a
   target and test name.
 - `c++/text/static_format/CMakeLists.txt:25`: where the `tests/fail` directory is registered.
+
+## Resolution (2026-10-27)
+
+- Renamed the pair to `pfmt_v_no_std_formatter.cpp` (`%v`) and `pfmt_V_no_eaux_formatter.cpp`
+  (`%V`). Contents are unchanged.
+- `eaux_compile_fail_tests` now stops configure when two files in a directory share a name up to
+  the first `.` when case is ignored, naming both files. Only a case-sensitive checkout (the Linux
+  CI legs) has both files, so that is where a new collision gets caught.
+- Checked on Linux with g++ 15.2 and clang++ 21.1: 62/62 tests pass, and configure fails with the
+  new error when a case-colliding copy or an identical-stem copy (`x.old.cpp` next to `x.cpp`) is
+  added. Still not checked on a Mac.

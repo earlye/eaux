@@ -36,15 +36,29 @@ function(eaux_doctest name)
 endfunction()
 
 # eaux_compile_fail_tests(<prefix> <dir> LIBRARIES ...): every <dir>/*.cpp must fail to compile
-# with output matching each of its `// expect: <regex>` lines (see check_compile_fail.cmake).
-# Each file is an EXCLUDE_FROM_ALL object library that its CTest case builds; the build tool
-# can't run concurrently in one build tree, hence the resource lock.
+# with output matching each of its `// expect: <regex>` lines (see check_compile_fail.cmake), and
+# no two files in <dir> may share a name up to the first `.` when case is ignored. Each file is an
+# EXCLUDE_FROM_ALL object library that its CTest case builds; the build tool can't run
+# concurrently in one build tree, hence the resource lock.
 function(eaux_compile_fail_tests prefix dir)
   cmake_parse_arguments(PARSE_ARGV 2 arg "" "" "LIBRARIES")
   file(GLOB sources CONFIGURE_DEPENDS ${dir}/*.cpp)
   if(NOT sources)
     message(FATAL_ERROR "${dir}: no compile-fail tests found")
   endif()
+  # Names up to the first `.` become target and build-directory names, which collide on
+  # case-insensitive filesystems (macOS, Windows) when they match ignoring case. Files whose names
+  # differ only by case also overwrite each other at checkout there, so only a case-sensitive
+  # checkout (such as the Linux CI legs) has both files and can catch it.
+  foreach(source IN LISTS sources)
+    get_filename_component(stem ${source} NAME_WE)
+    string(TOLOWER ${stem} lower)
+    if(DEFINED seen_${lower})
+      message(FATAL_ERROR "${source} and ${seen_${lower}}: names up to the first `.` match "
+        "when case is ignored, which breaks on case-insensitive filesystems; rename one of them")
+    endif()
+    set(seen_${lower} ${source})
+  endforeach()
   foreach(source IN LISTS sources)
     get_filename_component(stem ${source} NAME_WE)
     file(STRINGS ${source} expect REGEX "^// expect: " LIMIT_COUNT 1)
