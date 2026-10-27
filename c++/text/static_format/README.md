@@ -84,3 +84,47 @@ strings are scanned for non-ASCII bytes a word at a time and take a length-equal
 path when there are none; `ascii_string_view` skips even that scan. Malformed UTF-8 passes
 through. Numbers go through `std::to_chars`, so output is always "C"-locale. MSVC builds need
 `/utf-8`, which the CMake target adds. See `docs/adr/`.
+
+## Benchmarks
+
+`make bench` (from `c++/`) builds `bench/` optimized with each compiler and runs it. CI only
+builds it. Each case writes into a preallocated buffer; the `string_` cases return
+`std::string`. The `row` cases format a 30-argument table row (two `%-12s` labels and 28
+`%10.4f`), and `row_ascii` passes the labels as `ascii_string_view`.
+
+Median ns per call (5 repetitions, pinned to one core) on an AMD Ryzen 9 3900X, Linux 7.0,
+CMake Release (`-O3`), libstdc++ 15, fmt 12.2.0, Google Benchmark 1.10.0:
+
+| case | snprintf | std::format_to | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
+|---|---:|---:|---:|---:|---:|
+| `0x%02X`, g++ 15.2 | 44.9 | 73.2 | 9.6 | **7.5** | 7.8 |
+| `0x%02X`, clang 21.1 | 45.9 | 55.0 | 12.3 | **6.0** | **6.0** |
+| `%8.3f`, g++ | 203 | 119 | **40.2** | 59.6 | 56.6 |
+| `%8.3f`, clang | 209 | 123 | **42.9** | 52.5 | 53.5 |
+| short mixed line, g++ | 305 | 247 | **60.0** | 80.1 | 76.7 |
+| short mixed line, clang | 303 | 227 | 62.3 | 62.6 | **61.8** |
+| 30-argument row, g++ | 5905 | 3903 | 2005 | **1693** | 1873 |
+| 30-argument row, clang | 5841 | 4089 | 2218 | **1520** | 1607 |
+| row, `ascii_string_view` labels, g++ | | | | 1713 | 1860 |
+| row, `ascii_string_view` labels, clang | | | | 1473 | 1592 |
+
+| returning `std::string` | std::format | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
+|---|---:|---:|---:|---:|
+| `0x%02X`, g++ | 79.6 | **15.9** | 23.8 | 23.6 |
+| `0x%02X`, clang | 63.8 | **19.1** | 32.3 | 32.2 |
+| short mixed line, g++ | 267 | 152 | 140 | **135** |
+| short mixed line, clang | 255 | 159 | 158 | **151** |
+| 30-argument row, g++ | 3908 | 2154 | **2102** | 2232 |
+| 30-argument row, clang | 4138 | 2914 | **2049** | 2167 |
+
+Where it loses to `FMT_COMPILE`:
+
+- A lone floating-point conversion is 30-50% slower. static_format converts with
+  `std::to_chars(value, fixed, precision)`, and libstdc++'s implementation of that is slower
+  than fmt's own algorithm. The cost is the conversion, not the formatting around it.
+- For a tiny result returned as `std::string` (`0x%02X`), static_format takes 24-32 ns against
+  fmt's 16-19.
+
+It is ahead on integers and on the 30-argument row, and level on the mixed line under clang.
+The `ascii_string_view` row is no faster than the plain one,
+within noise: scanning two 12-byte labels for non-ASCII bytes costs almost nothing.
