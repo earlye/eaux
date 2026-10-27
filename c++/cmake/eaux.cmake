@@ -45,6 +45,17 @@ function(eaux_compile_fail_tests prefix dir)
   if(NOT sources)
     message(FATAL_ERROR "${dir}: no compile-fail tests found")
   endif()
+  # Test names that differ only by case collide on case-insensitive filesystems (macOS, Windows):
+  # the files at checkout, and the target and build-directory names made from their stems.
+  foreach(source IN LISTS sources)
+    get_filename_component(stem ${source} NAME_WE)
+    string(TOLOWER ${stem} lower)
+    if(DEFINED seen_${lower})
+      message(FATAL_ERROR "${source} and ${seen_${lower}}: stems match when case is ignored, "
+        "which breaks on case-insensitive filesystems")
+    endif()
+    set(seen_${lower} ${source})
+  endforeach()
   foreach(source IN LISTS sources)
     get_filename_component(stem ${source} NAME_WE)
     file(STRINGS ${source} expect REGEX "^// expect: " LIMIT_COUNT 1)
