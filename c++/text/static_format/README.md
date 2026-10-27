@@ -44,7 +44,9 @@ auto [out, size] = "%-12s"_pfmt.to_n(buffer, 8, label);     // size: the untrunc
 - Length modifiers (`hh h l ll z j t L`) are accepted and ignored, so `sprintf` strings paste in.
 - `%N$` and `%N%` select arguments by position (from 1) and may repeat; a string cannot mix them
   with sequential conversions. `%N%` formats like `{N-1}` would.
-- The argument count must match exactly.
+- Every argument passed must be used at least once, in both syntaxes; an unused argument, or a
+  reference past the last one, is a compile error. This differs from `std::format`, which
+  allows extra arguments (see ADR 0002).
 - `%v` and `%V` take width, precision and the alignment flags `- ^ >` only.
 - A braced spec before the conversion carries extra keys. The only built-in key is `ascii`:
   `%{ascii}s` requires an `ascii_string_view` argument. For `%V` the braces hold the user
@@ -56,7 +58,7 @@ auto [out, size] = "%-12s"_pfmt.to_n(buffer, 8, label);     // size: the untrunc
 ## Brace syntax
 
 `{[arg-id][:[[fill]align][sign][#][0][width][.precision][type]]}` with `{{` and `}}`, following
-`std::format`'s rules for the built-in types (including that extra arguments are allowed).
+`std::format`'s rules for the built-in types.
 Not supported yet: nested `{}` for dynamic width or precision, the `L` option and the `?` type.
 Chrono and range specs (`{:%Y-%m-%d}`, `{::x}`) work wherever the standard library formats
 those types, because such fields go to `std::formatter` (below). One deliberate difference from

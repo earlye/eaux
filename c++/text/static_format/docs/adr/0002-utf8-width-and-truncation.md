@@ -31,6 +31,12 @@ diverges from `std::format`, which writes a `char` and throws when the value doe
 here formatting stays infallible at run time, and a code point is the useful reading of an
 integer in UTF-8 text.
 
+Every argument passed must be used by the format string at least once, in both syntaxes, and
+an unused one is a compile error naming it. This is a second deliberate difference from
+`std::format`, which allows extra arguments so that a translated runtime format string may omit
+some. Here format strings are compile-time literals, so that reason does not apply, and an
+unused argument is almost always a dropped column.
+
 ## Considered Options
 
 - Byte counting in `_pfmt` for exact `sprintf` fidelity, Unicode awareness only in `_bfmt`.

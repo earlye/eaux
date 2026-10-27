@@ -49,9 +49,31 @@ constexpr bool format_string_error() {
 template <syntax Syn, std::size_t Required, std::size_t Given>
 constexpr bool argument_count() {
   static_assert(Given >= Required, "static_format: the format string uses more arguments than were passed");
-  static_assert(Syn != syntax::printf || Given <= Required,
-                "static_format: more arguments were passed than the printf format string uses");
-  return Given >= Required && (Syn != syntax::printf || Given <= Required);
+  return Given >= Required;
+}
+
+// Every argument passed must be used at least once; the template argument names the first that
+// is not, counted the way each syntax counts (printf from 1, brace from 0).
+template <std::size_t ArgNumber, bool Used>
+constexpr bool printf_argument_used() {
+  static_assert(Used, "static_format: an argument is passed but the format string never uses it");
+  return Used;
+}
+
+template <std::size_t ArgId, bool Used>
+constexpr bool brace_argument_used() {
+  static_assert(Used, "static_format: an argument is passed but the format string never uses it");
+  return Used;
+}
+
+// `FirstUnused` is the zero-based index of the first unused argument, or `Given` when none is.
+template <syntax Syn, std::size_t FirstUnused, std::size_t Given>
+constexpr bool every_argument_used() {
+  if constexpr (Syn == syntax::printf) {
+    return printf_argument_used<FirstUnused + 1, FirstUnused == Given>();
+  } else {
+    return brace_argument_used<FirstUnused, FirstUnused == Given>();
+  }
 }
 
 template <class T>

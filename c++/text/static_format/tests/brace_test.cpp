@@ -38,7 +38,7 @@ TEST_CASE("escapes and indexing") {
   CHECK("{{}}"_bfmt() == "{}");
   CHECK("{{{}}}"_bfmt(1) == "{1}");
   CHECK("{1} {0} {1}"_bfmt("a", "b") == "b a b");
-  CHECK("{} {}"_bfmt(1, 2, 3) == "1 2");  // as in std::format, extra arguments are allowed
+  CHECK("{1} {0} {1}"_bfmt("a", "b") == "b a b");  // every argument used, one of them twice
 }
 
 TEST_CASE("integers match std::format") {

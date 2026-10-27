@@ -155,6 +155,7 @@ TEST_CASE("alignment extensions") {
 TEST_CASE("positional arguments may repeat") {
   CHECK("%1$s-%1$s-%2$d"_pfmt("ab", 3) == "ab-ab-3");
   CHECK("%2% %1% %2%"_pfmt(1, "x") == "x 1 x");
+  CHECK("%1% %1%"_pfmt("a") == "a a");
 }
 
 TEST_CASE("%N% formats like {}") {

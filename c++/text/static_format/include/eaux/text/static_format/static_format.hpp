@@ -33,6 +33,21 @@
 
 namespace eaux::text::static_format {
 
+namespace detail {
+
+// The lowest argument index below `given` that no segment uses, or `given` when all are used.
+template <class Segments>
+constexpr std::size_t first_unused_argument(Segments const& segments, std::size_t given) noexcept {
+  for (std::size_t arg = 0; arg < given; ++arg) {
+    bool used = false;
+    for (auto const& seg : segments) used = used || (seg.kind == segment_kind::argument && seg.arg == arg);
+    if (!used) return arg;
+  }
+  return given;
+}
+
+}  // namespace detail
+
 template <detail::syntax Syn, fixed_string S>
 class compiled_format {
   static constexpr auto info = detail::scan<Syn>(S.view());
@@ -87,7 +102,9 @@ class compiled_format {
  private:
   template <class Sink, class... Args>
   static void render(Sink& sink, Args const&... args) {
-    if constexpr (detail::argument_count<Syn, arguments, sizeof...(Args)>()) {
+    constexpr std::size_t unused = detail::first_unused_argument(parsed.segments, sizeof...(Args));
+    constexpr bool all_used = detail::every_argument_used<Syn, unused, sizeof...(Args)>();
+    if constexpr (detail::argument_count<Syn, arguments, sizeof...(Args)>() && all_used) {
       detail::argument_pack<std::index_sequence_for<Args...>, Args...> const pack{{args}...};
       [&]<std::size_t... I>(std::index_sequence<I...>) {
         (emit<I>(sink, pack), ...);

@@ -81,6 +81,8 @@ Further printf rules:
   - The original's `_` is dropped, and `=` no longer means center.
 - A repeated positional (`%1%`, `%1$s`) reuses its argument.
 - An out-of-range index, and mixing positional with sequential arguments, are compile errors.
+- Every argument passed must be used at least once, in both syntaxes; an unused argument is a
+  compile error naming it (unlike `std::format`, which allows extras; see ADR 0002).
 
 The brace side follows `std::format`'s type rules. For `{:spec}` on a user type it tries, in
 order:
@@ -303,3 +305,8 @@ In this repo:
   The same reasoning moved grapheme segmentation, display width, the ASCII scan and the Unicode
   tables into a third package, `eaux::text::unicode` at `c++/text/unicode`, which
   `static_format` links.
+
+### 2026-10-27
+
+- Q (Early, PR review): extra arguments? — A: every argument must be used at least once, both
+  syntaxes, compile-time.
