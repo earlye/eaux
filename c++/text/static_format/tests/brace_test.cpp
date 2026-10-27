@@ -39,7 +39,7 @@ TEST_CASE("integers match std::format") {
 // UTF-8 and substitutes U+FFFD for anything that is not a Unicode scalar value.
 TEST_CASE("{:c} on an integer writes a code point") {
   CHECK("{:c}"_bfmt(65) == "A");
-  // Sign, # and 0 are accepted and, as for any character, do not change it; c pads like text.
+  // On an integer, sign, # and 0 are accepted and leave the character unchanged; c pads like text.
   CHECK("{:+c}|{:-c}|{: c}|{:#c}|{:05c}"_bfmt(65, 65, 65, 65, 65) == "A|A|A|A|A    ");
   CHECK("{:05c}"_bfmt(0x4E2D) == "\u4E2D   ");
   CHECK("{:c}|[{:4c}]|[{:>4c}]"_bfmt(0x4E2D, 0x4E2D, 0x4E2D) == "\u4E2D|[\u4E2D  ]|[  \u4E2D]");
