@@ -67,6 +67,20 @@ the same work. In a single row the fields only line up like that when they all s
   footer takes values.
 - **Policies:** how they are selected, in the spec or as a template or type parameter.
 
+## Possible follow-ups
+
+Not part of this issue.
+
+- **Allow `std::vector<bool>` as a column** so bitfields can be formatted in tables.
+  - It isn't a `contiguous_range`, so the contiguous-only rule above rejects it. It would
+    need its own exception.
+  - The standard gives no access to its packed words (no `data()`). A word-at-a-time path
+    would therefore need library-specific access. The alternative is going through its
+    iterators, which costs speed.
+  - Turning packed bits into one byte per row is a well-known SIMD step (for example, AVX-512
+    mask-to-byte moves).
+  - `std::bitset` would raise the same questions.
+
 ## Blocked by
 
 - `issues/issue-01a183af-bea4-7747-8222-9e0ab57cf558-static-format-simd-row-formatting.md`:
