@@ -15,8 +15,8 @@
 #include <string_view>
 #include <vector>
 
-// The float conversion backend chosen by EAUX_STATIC_FORMAT_FLOAT_BACKEND must write what
-// std::to_chars writes, digit for digit. Under the to_chars backend this compares it with itself.
+// The vendored float conversion (Dragonbox and the port of fmt's fixed-precision digits) must
+// write what std::to_chars writes, digit for digit.
 
 using namespace eaux::text::static_format::literals;
 namespace detail = eaux::text::static_format::detail;
@@ -87,7 +87,7 @@ std::vector<double> random_values(int count) {
 }
 
 template <class F>
-std::string backend(F value, std::chars_format format, std::size_t precision) {
+std::string ours(F value, std::chars_format format, std::size_t precision) {
   std::string out(capacity, '\0');
   out.resize(precision == detail::no_precision ? detail::shortest_chars(out.data(), capacity, value)
                                                : detail::float_chars(out.data(), capacity, value, format, precision));
@@ -111,7 +111,7 @@ struct mismatches {
   template <class F>
   void check(F value, std::chars_format format, std::size_t precision) {
     F const magnitude = std::fabs(value);
-    std::string const got = backend(magnitude, format, precision);
+    std::string const got = ours(magnitude, format, precision);
     std::string const want = reference(magnitude, format, precision);
     if (got == want) return;
     if (count++ < 5) {
@@ -158,13 +158,13 @@ std::string c_printf(char const* format, Args... args) {
 
 }  // namespace
 
-TEST_CASE("the float backend matches std::to_chars on edge cases, precisions 0-17") { check_precisions(edge_values()); }
+TEST_CASE("float conversion matches std::to_chars on edge cases, precisions 0-17") { check_precisions(edge_values()); }
 
-TEST_CASE("the float backend matches std::to_chars on random doubles, precisions 0-17") {
+TEST_CASE("float conversion matches std::to_chars on random doubles, precisions 0-17") {
   check_precisions(random_values(40000));
 }
 
-TEST_CASE("the float backend matches std::to_chars in shortest form") {
+TEST_CASE("float conversion matches std::to_chars in shortest form") {
   mismatches m;
   std::mt19937_64 rng(42);
   for (int i = 0; i < 400000; ++i) {
@@ -205,7 +205,7 @@ std::string alternate_g(double v, int p) {
     }                                                                                     \
   }
 
-TEST_CASE("%#g through the backend matches std::to_chars, precisions 0-17") {
+TEST_CASE("%#g matches std::to_chars, precisions 0-17") {
   std::vector<double> values = edge_values();
   std::vector<double> const random = random_values(4000);
   values.insert(values.end(), random.begin(), random.end());

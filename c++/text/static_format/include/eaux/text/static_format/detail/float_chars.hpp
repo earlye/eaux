@@ -1,6 +1,8 @@
 #pragma once
 
 #include <eaux/text/static_format/detail/segment.hpp>
+#include <eaux/text/static_format/detail/third_party/dragonbox.h>
+#include <eaux/text/static_format/detail/third_party/fmt_fixed_precision.hpp>
 
 #include <bit>
 #include <charconv>
@@ -10,22 +12,9 @@
 #include <system_error>
 #include <type_traits>
 
-// The float conversion backend, picked at compile time by the CMake option
-// EAUX_STATIC_FORMAT_FLOAT_BACKEND. Every backend writes exactly what std::to_chars writes; x87
-// long double and hex floats always go to std::to_chars.
-#if defined(EAUX_STATIC_FORMAT_FLOAT_BACKEND_FMT)
-#include <fmt/compile.h>
-#include <fmt/format.h>
-#elif defined(EAUX_STATIC_FORMAT_FLOAT_BACKEND_VENDORED)
-#include <eaux/text/static_format/detail/third_party/dragonbox.h>
-#include <eaux/text/static_format/detail/third_party/fmt_fixed_precision.hpp>
-#elif defined(EAUX_STATIC_FORMAT_FLOAT_BACKEND_VENDORED_FLOFF)
-#include <eaux/text/static_format/detail/third_party/dragonbox.h>
-#include <eaux/text/static_format/detail/third_party/floff.h>
-#else
-#define EAUX_STATIC_FORMAT_FLOAT_BACKEND_TO_CHARS
-#endif
-
+// Float conversion: Dragonbox for shortest form and fmt's fixed-precision digit generation for
+// %f, %e and %g (see docs/adr/0003), laid out to match std::to_chars byte for byte. x87 long
+// double, hex floats and the few precisions the fast path cannot decide go to std::to_chars.
 namespace eaux::text::static_format::detail {
 
 template <class F>
@@ -45,20 +34,6 @@ std::size_t to_chars_shortest(char* first, std::size_t capacity, F value) {
   auto const r = std::to_chars(first, first + capacity, static_cast<to_chars_float<F>>(value));
   return r.ec == std::errc{} ? static_cast<std::size_t>(r.ptr - first) : 0;
 }
-
-#if defined(EAUX_STATIC_FORMAT_FLOAT_BACKEND_TO_CHARS)
-
-template <class F>
-std::size_t float_chars(char* first, std::size_t capacity, F value, std::chars_format format, std::size_t precision) {
-  return to_chars_precision(first, capacity, value, format, precision);
-}
-
-template <class F>
-std::size_t shortest_chars(char* first, std::size_t capacity, F value) {
-  return to_chars_shortest(first, capacity, value);
-}
-
-#else
 
 namespace float_layout {
 
@@ -210,13 +185,9 @@ inline std::size_t zero_chars(char* out, std::chars_format format, int p) noexce
 
 }  // namespace float_layout
 
-#if defined(EAUX_STATIC_FORMAT_FLOAT_BACKEND_VENDORED) || defined(EAUX_STATIC_FORMAT_FLOAT_BACKEND_VENDORED_FLOFF)
-
 namespace float_digits {
 
 inline constexpr int fallback = -100000;
-
-#if defined(EAUX_STATIC_FORMAT_FLOAT_BACKEND_VENDORED)
 
 // n significant digits of v > 0 at out[0..n); returns their decimal exponent, or `fallback`.
 inline int scientific(double v, int n, char* out) noexcept {
@@ -234,36 +205,6 @@ inline int fixed(double v, int p, char* out) noexcept {
   return count == 1 && out[0] == '0' ? 0 : count;
 }
 
-#else
-
-inline char* floff_chars(double v, int precision, char* out) noexcept {
-  return jkj::floff::floff<jkj::floff::main_cache_full, jkj::floff::extended_cache_long>(v, precision, out);
-}
-
-inline int scientific(double v, int n, char* out) noexcept {
-  char const* const end = floff_chars(v, n - 1, out);
-  char const* e = out + (n > 1 ? n + 1 : n);
-  bool const negative = e[1] == '-';
-  int x = 0;
-  for (char const* d = e + 2; d != end; ++d) x = x * 10 + (*d - '0');
-  if (n > 1) std::memmove(out + 1, out + 2, static_cast<std::size_t>(n) - 1);
-  return negative ? -x : x;
-}
-
-inline int fixed(double v, int p, char* out) noexcept {
-  int const estimate = float_layout::log10_estimate(v);
-  int const n = estimate + 1 + p;
-  if (n < 1) return -1;
-  if (scientific(v, n, out) == estimate) return n;
-  // The estimate was one low, or the digits rounded up to the next power of ten.
-  if (scientific(v, n + 1, out) == estimate + 1) return n + 1;
-  out[0] = '1';
-  std::memset(out + 1, '0', static_cast<std::size_t>(n));
-  return n + 1;
-}
-
-#endif
-
 }  // namespace float_digits
 
 // v >= 0 and finite. Returns 0 when `capacity` is too small.
@@ -278,13 +219,9 @@ inline std::size_t precision_chars(char* out, std::size_t capacity, double v, st
     return layout::fixed_layout(out, count, p);
   }
   if (format == std::chars_format::scientific) {
-#if defined(EAUX_STATIC_FORMAT_FLOAT_BACKEND_VENDORED_FLOFF)
-    return static_cast<std::size_t>(float_digits::floff_chars(v, p, out) - out);
-#else
     int const x = float_digits::scientific(v, p + 1, out);
     if (x == float_digits::fallback) return to_chars_precision(out, capacity, v, format, static_cast<std::size_t>(p));
     return layout::scientific_layout(out, p + 1, x);
-#endif
   }
   // %g: P significant digits, then %f if P > X >= -4, else %e, without trailing zeros.
   int const n = p == 0 ? 1 : p;
@@ -312,31 +249,6 @@ std::size_t shortest_decimal_chars(char* out, F value) {
   return float_layout::shortest_layout(out, d.significand, d.exponent, value >= big);
 }
 
-#else  // fmt
-
-inline std::size_t precision_chars(char* out, std::size_t capacity, double v, std::chars_format format, int p) {
-  int const integral = v < 1 ? 1 : float_layout::log10_estimate(v) + 2;
-  if (capacity < static_cast<std::size_t>((format == std::chars_format::fixed ? integral : 1) + p + 8)) return 0;
-  char* end;
-  if (format == std::chars_format::fixed) {
-    end = fmt::format_to(out, FMT_COMPILE("{:.{}f}"), v, p);
-  } else if (format == std::chars_format::scientific) {
-    end = fmt::format_to(out, FMT_COMPILE("{:.{}e}"), v, p);
-  } else {
-    end = fmt::format_to(out, FMT_COMPILE("{:.{}g}"), v, p);
-  }
-  return static_cast<std::size_t>(end - out);
-}
-
-template <class F>
-std::size_t shortest_decimal_chars(char* out, F value) {
-  auto const d = fmt::detail::dragonbox::to_decimal(value);
-  constexpr F big = std::is_same_v<F, float> ? 0x1p24f : 0x1p53;
-  return float_layout::shortest_layout(out, d.significand, d.exponent, value >= big);
-}
-
-#endif
-
 // Returns the length written, or 0 when the buffer is too small (a conversion is never empty).
 template <class F>
 std::size_t float_chars(char* first, std::size_t capacity, F value, std::chars_format format, std::size_t precision) {
@@ -362,7 +274,5 @@ std::size_t shortest_chars(char* first, std::size_t capacity, F value) {
   }
   return to_chars_shortest(first, capacity, value);
 }
-
-#endif
 
 }  // namespace eaux::text::static_format::detail
