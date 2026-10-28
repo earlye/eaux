@@ -278,7 +278,7 @@ EAUX_STATIC_FORMAT_NOINLINE void write_float_large(Sink& sink, std::string_view 
 }
 
 template <field_spec Spec, class Sink, std::floating_point F>
-void write_float(Sink& sink, F value) {
+EAUX_STATIC_FORMAT_ALWAYS_INLINE void write_float(Sink& sink, F value) {
   using form = float_form<Spec>;
   bool const negative = std::signbit(value);
   F const magnitude = negative ? -value : value;
