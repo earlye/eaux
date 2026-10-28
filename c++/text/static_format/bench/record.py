@@ -42,6 +42,10 @@ BENCH_ARGS = ["--benchmark_repetitions=5", "--benchmark_report_aggregates_only=t
 CASES = {
     "hex": "hex/buffer",
     "float": "float/buffer",
+    "shortest": "shortest/buffer",
+    "general": "general/buffer",
+    "scientific": "scientific/buffer",
+    "float_batch": "float-batch/buffer",
     "mixed": "mixed/buffer",
     "row": "row30/buffer",
     "row_ascii": "row30-ascii/buffer",

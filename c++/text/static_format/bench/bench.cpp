@@ -8,6 +8,7 @@
 #include <fmt/format.h>
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <format>
@@ -25,6 +26,7 @@ struct inputs {
   std::array<unsigned, table_size> bytes{};
   std::array<int, table_size> ints{};
   std::array<double, table_size> doubles{};
+  std::array<double, table_size> sci{};  // 17 significant digits, magnitudes 1e-9 to 1e9
   std::array<std::string, table_size> names;
   std::array<std::string_view, table_size> views{};
   std::array<ascii_string_view, table_size> ascii{};
@@ -39,6 +41,9 @@ inputs const& data() {
       in.bytes[i] = next() >> 24;
       in.ints[i] = static_cast<int>(next() >> 20) - 2048;
       in.doubles[i] = static_cast<double>(static_cast<int>(next() >> 8)) / 4096.0 - 1000.0;
+      double const mantissa = 1.0 + static_cast<double>(next()) / 4294967296.0 * 9.0;
+      int const exponent = static_cast<int>(next() >> 16) % 19 - 9;
+      in.sci[i] = (next() & 0x10000u ? -mantissa : mantissa) * std::pow(10.0, exponent);
       in.names[i] = "member_" + std::to_string(next() % 1000);
       in.views[i] = in.names[i];
       in.ascii[i] = *ascii_string_view::from(in.names[i]);
@@ -77,6 +82,43 @@ BENCH(float_std_format_to, std::format_to(buffer, "{:8.3f}", d.doubles[k]));
 BENCH(float_fmt_compile, fmt::format_to(buffer, FMT_COMPILE("{:8.3f}"), d.doubles[k]));
 BENCH(float_pfmt, "%8.3f"_pfmt.to(buffer, d.doubles[k]));
 BENCH(float_bfmt, "{:8.3f}"_bfmt.to(buffer, d.doubles[k]));
+
+// Shortest round-trip form; printf has no equivalent. The sci table has 17-digit values.
+BENCH(shortest_std_format_to, std::format_to(buffer, "{}", d.sci[k]));
+BENCH(shortest_fmt_compile, fmt::format_to(buffer, FMT_COMPILE("{}"), d.sci[k]));
+BENCH(shortest_bfmt, "{}"_bfmt.to(buffer, d.sci[k]));
+
+// "%g", precision 6 by default.
+BENCH(general_snprintf, std::snprintf(buffer, sizeof buffer, "%g", d.sci[k]));
+BENCH(general_std_format_to, std::format_to(buffer, "{:g}", d.sci[k]));
+BENCH(general_fmt_compile, fmt::format_to(buffer, FMT_COMPILE("{:g}"), d.sci[k]));
+BENCH(general_pfmt, "%g"_pfmt.to(buffer, d.sci[k]));
+BENCH(general_bfmt, "{:g}"_bfmt.to(buffer, d.sci[k]));
+
+// "%e", precision 6 by default.
+BENCH(scientific_snprintf, std::snprintf(buffer, sizeof buffer, "%e", d.sci[k]));
+BENCH(scientific_std_format_to, std::format_to(buffer, "{:e}", d.sci[k]));
+BENCH(scientific_fmt_compile, fmt::format_to(buffer, FMT_COMPILE("{:e}"), d.sci[k]));
+BENCH(scientific_pfmt, "%e"_pfmt.to(buffer, d.sci[k]));
+BENCH(scientific_bfmt, "{:e}"_bfmt.to(buffer, d.sci[k]));
+
+// Scientific output: 16 lines of three float fields each, one line per value of the sci table.
+#define BATCH(...)                                                    \
+  [&] {                                                               \
+    char* out = buffer;                                               \
+    for (std::size_t j = 0; j < 16; ++j) {                            \
+      double const x = d.sci[k + j];                                  \
+      __VA_ARGS__;                                                    \
+    }                                                                 \
+    return out;                                                       \
+  }()
+
+BENCH(float_batch_snprintf,
+      BATCH(out += std::snprintf(out, static_cast<std::size_t>(buffer + sizeof buffer - out), "%.6e %g %10.4f\n", x, x, x)));
+BENCH(float_batch_std_format_to, BATCH(out = std::format_to(out, "{:.6e} {:g} {:10.4f}\n", x, x, x)));
+BENCH(float_batch_fmt_compile, BATCH(out = fmt::format_to(out, FMT_COMPILE("{:.6e} {:g} {:10.4f}\n"), x, x, x)));
+BENCH(float_batch_pfmt, BATCH(out = "%.6e %g %10.4f\n"_pfmt.to(out, x, x, x)));
+BENCH(float_batch_bfmt, BATCH(out = "{:.6e} {:g} {:10.4f}\n"_bfmt.to(out, x, x, x)));
 
 // A short mixed line.
 BENCH(mixed_snprintf,

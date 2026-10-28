@@ -1,5 +1,6 @@
 #pragma once
 
+#include <eaux/text/static_format/detail/float_chars.hpp>
 #include <eaux/text/static_format/detail/segment.hpp>
 #include <eaux/text/static_format/detail/sink.hpp>
 #include <eaux/text/unicode/unicode.hpp>
@@ -19,15 +20,18 @@
 
 // Writers for the built-in argument kinds. Each takes its field_spec as a template argument, so
 // the branches on flags, width and conversion fold away and only the conversion itself runs.
-// Numbers are converted with std::to_chars and are therefore always "C"-locale.
+// Integers are converted with std::to_chars and floats by float_chars.hpp (Dragonbox and a port of
+// fmt's digits), so both are always "C"-locale.
 namespace eaux::text::static_format::detail {
 
-template <class Sink>
-void put_fill(Sink& sink, fill_char const& fill, std::size_t n) {
-  if (fill.size == 1) {
-    sink.fill(fill.bytes[0], n);
+// The fill is a template argument so a one-byte fill folds to sink.fill and inlines; with a
+// runtime fill, g++ calls put_fill out of line for every padded field.
+template <fill_char Fill, class Sink>
+void put_fill(Sink& sink, std::size_t n) {
+  if constexpr (Fill.size == 1) {
+    sink.fill(Fill.bytes[0], n);
   } else {
-    for (std::size_t i = 0; i < n; ++i) sink.put(std::string_view(fill.bytes, fill.size));
+    for (std::size_t i = 0; i < n; ++i) sink.put(std::string_view(Fill.bytes, Fill.size));
   }
 }
 
@@ -59,13 +63,13 @@ void put_padded(Sink& sink, std::string_view sign, std::string_view base, std::s
     } else {
       before = pad;
     }
-    put_fill(sink, Spec.fill, before);
+    put_fill<Spec.fill>(sink, before);
     sink.put(sign);
     sink.put(base);
-    put_fill(sink, Spec.fill, inside);
+    put_fill<Spec.fill>(sink, inside);
     sink.fill('0', zeros);
     sink.put(body);
-    put_fill(sink, Spec.fill, after);
+    put_fill<Spec.fill>(sink, after);
   }
 }
 
@@ -191,24 +195,6 @@ void write_integer(Sink& sink, T value) {
   put_padded<Spec, align::right>(sink, sign, prefix, zeros, digits, digits.size(), zero_pad);
 }
 
-template <class F>
-using to_chars_float = std::conditional_t<std::is_same_v<F, long double> && sizeof(long double) == sizeof(double), double, F>;
-
-// Returns the length written, or 0 when the buffer is too small (a conversion is never empty).
-template <class F>
-std::size_t float_chars(char* first, std::size_t capacity, F value, std::chars_format format, std::size_t precision) {
-  auto const v = static_cast<to_chars_float<F>>(value);
-  auto const r = precision == no_precision ? std::to_chars(first, first + capacity, v, format)
-                                           : std::to_chars(first, first + capacity, v, format, static_cast<int>(precision));
-  return r.ec == std::errc{} ? static_cast<std::size_t>(r.ptr - first) : 0;
-}
-
-template <class F>
-std::size_t shortest_chars(char* first, std::size_t capacity, F value) {
-  auto const r = std::to_chars(first, first + capacity, static_cast<to_chars_float<F>>(value));
-  return r.ec == std::errc{} ? static_cast<std::size_t>(r.ptr - first) : 0;
-}
-
 // The decimal exponent of a %e rendering, e.g. 3 for "1.234e+03".
 inline int exponent_of(std::string_view sci) noexcept {
   auto const e = sci.find('e');
@@ -217,83 +203,110 @@ inline int exponent_of(std::string_view sci) noexcept {
   return x;
 }
 
-template <field_spec Spec, class Sink, std::floating_point F>
-void write_float(Sink& sink, F value) {
-  constexpr char conversion = Spec.conversion;
-  constexpr bool printf = Spec.syn == syntax::printf;
-  constexpr bool upper = conversion == 'E' || conversion == 'F' || conversion == 'G' || conversion == 'A';
+// What a float field's spec fixes at compile time.
+template <field_spec Spec>
+struct float_form {
+  static constexpr char conversion = Spec.conversion;
+  static constexpr bool printf = Spec.syn == syntax::printf;
+  static constexpr bool upper = conversion == 'E' || conversion == 'F' || conversion == 'G' || conversion == 'A';
+  static constexpr auto format = conversion == 'f' || conversion == 'F'   ? std::chars_format::fixed
+                                 : conversion == 'e' || conversion == 'E' ? std::chars_format::scientific
+                                 : conversion == 'a' || conversion == 'A' ? std::chars_format::hex
+                                                                          : std::chars_format::general;
+  // printf defaults to precision 6 except for %a; std::format defaults to the shortest
+  // round-trip form when the type is absent or a/A.
+  static constexpr bool shortest = Spec.precision == no_precision &&
+                                   (format == std::chars_format::hex || (!printf && conversion == 0));
+  static constexpr std::size_t precision = shortest                            ? no_precision
+                                           : Spec.precision != no_precision ? Spec.precision
+                                                                              : 6;
+  static constexpr std::string_view prefix = printf && format == std::chars_format::hex ? (upper ? "0X" : "0x") : "";
+  static constexpr bool zero_pad = printf ? Spec.zero && Spec.alignment != align::left && Spec.alignment != align::center
+                                          : Spec.zero && Spec.alignment == align::none;
+};
 
+// Renders a non-negative finite value; returns the length, or 0 when `capacity` is too small.
+// `capacity` must be one less than the buffer, so # can insert a decimal point.
+template <field_spec Spec, std::floating_point F>
+std::size_t render_float(char* out, std::size_t capacity, F magnitude) {
+  using form = float_form<Spec>;
+  std::size_t size;
+  if constexpr (form::shortest && form::conversion == 0) {
+    size = shortest_chars(out, capacity, magnitude);
+  } else if constexpr (Spec.alternate && form::format == std::chars_format::general) {
+    // %#g keeps trailing zeros, which to_chars' general format strips: pick %e or %f by C's
+    // rule and render that with the matching precision.
+    std::size_t const p = form::precision == 0 ? 1 : form::precision;
+    size = float_chars(out, capacity, magnitude, std::chars_format::scientific, p - 1);
+    if (size == 0) return 0;
+    int const x = exponent_of(std::string_view(out, size));
+    if (static_cast<long long>(p) > x && x >= -4) {
+      size = float_chars(out, capacity, magnitude, std::chars_format::fixed,
+                         static_cast<std::size_t>(static_cast<long long>(p) - 1 - x));
+    }
+  } else {
+    size = float_chars(out, capacity, magnitude, form::format, form::precision);
+  }
+  if constexpr (Spec.alternate) {
+    std::string_view const rendered(out, size);
+    if (size != 0 && rendered.find('.') == std::string_view::npos) {
+      auto const exponent = std::min(rendered.find(form::format == std::chars_format::hex ? 'p' : 'e'), size);
+      std::copy_backward(out + exponent, out + size, out + size + 1);
+      out[exponent] = '.';
+      ++size;
+    }
+  }
+  return size;
+}
+
+template <field_spec Spec, class Sink>
+void finish_float(Sink& sink, std::string_view sign, char* out, std::size_t size) {
+  using form = float_form<Spec>;
+  if constexpr (form::upper) to_upper(out, out + size);
+  put_padded<Spec, align::right>(sink, sign, form::prefix, 0, std::string_view(out, size), size, form::zero_pad);
+}
+
+// Only a large precision or a huge %f value (up to max_exponent10 integral digits) overflows the
+// stack buffer. Out of line, so the std::string and its unwinding stay out of write_float's frame.
+// The size must cover precision_chars' capacity check (integral digits + precision + 8).
+template <field_spec Spec, class Sink, std::floating_point F>
+EAUX_STATIC_FORMAT_NOINLINE void write_float_large(Sink& sink, std::string_view sign, F magnitude) {
+  using form = float_form<Spec>;
+  std::string large((form::shortest ? 0 : form::precision) + std::numeric_limits<F>::max_exponent10 + 32, '\0');
+  std::size_t const size = render_float<Spec>(large.data(), large.size() - 1, magnitude);
+  assert(size != 0 && "the heap buffer holds any conversion: precision plus max_exponent10 integral digits");
+  finish_float<Spec>(sink, sign, large.data(), size);
+}
+
+template <field_spec Spec, class Sink, std::floating_point F>
+EAUX_STATIC_FORMAT_ALWAYS_INLINE void write_float(Sink& sink, F value) {
+  using form = float_form<Spec>;
   bool const negative = std::signbit(value);
   F const magnitude = negative ? -value : value;
   std::string_view const sign = sign_of<Spec>(negative);
 
   if (!std::isfinite(value)) {
-    std::string_view const body = std::isnan(value) ? (upper ? "NAN" : "nan") : (upper ? "INF" : "inf");
+    std::string_view const body = std::isnan(value) ? (form::upper ? "NAN" : "nan") : (form::upper ? "INF" : "inf");
     put_padded<Spec, align::right>(sink, sign, {}, 0, body, body.size(), false);
     return;
   }
 
-  constexpr auto format = conversion == 'f' || conversion == 'F'   ? std::chars_format::fixed
-                          : conversion == 'e' || conversion == 'E' ? std::chars_format::scientific
-                          : conversion == 'a' || conversion == 'A' ? std::chars_format::hex
-                                                                   : std::chars_format::general;
-  // printf defaults to precision 6 except for %a; std::format defaults to the shortest
-  // round-trip form when the type is absent or a/A.
-  constexpr bool shortest = Spec.precision == no_precision &&
-                            (format == std::chars_format::hex || (!printf && conversion == 0));
-  constexpr std::size_t precision = shortest                            ? no_precision
-                                    : Spec.precision != no_precision ? Spec.precision
-                                                                       : 6;
-  constexpr std::string_view prefix = printf && format == std::chars_format::hex ? (upper ? "0X" : "0x") : "";
-
-  // Each attempt leaves one byte spare for the decimal point that # may insert.
-  auto const render = [&](char* out, std::size_t capacity) -> std::size_t {
-    std::size_t size;
-    if constexpr (shortest && conversion == 0) {
-      size = shortest_chars(out, capacity, magnitude);
-    } else if constexpr (Spec.alternate && format == std::chars_format::general) {
-      // %#g keeps trailing zeros, which to_chars' general format strips: pick %e or %f by C's
-      // rule and render that with the matching precision.
-      std::size_t const p = precision == 0 ? 1 : precision;
-      size = float_chars(out, capacity, magnitude, std::chars_format::scientific, p - 1);
-      if (size == 0) return 0;
-      int const x = exponent_of(std::string_view(out, size));
-      if (static_cast<long long>(p) > x && x >= -4) {
-        size = float_chars(out, capacity, magnitude, std::chars_format::fixed,
-                           static_cast<std::size_t>(static_cast<long long>(p) - 1 - x));
-      }
-    } else {
-      size = float_chars(out, capacity, magnitude, format, precision);
-    }
-    if constexpr (Spec.alternate) {
-      std::string_view const rendered(out, size);
-      if (size != 0 && rendered.find('.') == std::string_view::npos) {
-        auto const exponent = std::min(rendered.find(format == std::chars_format::hex ? 'p' : 'e'), size);
-        std::copy_backward(out + exponent, out + size, out + size + 1);
-        out[exponent] = '.';
-        ++size;
-      }
-    }
-    return size;
-  };
-
-  constexpr bool zero_pad =
-      printf ? Spec.zero && Spec.alignment != align::left && Spec.alignment != align::center : Spec.zero && Spec.alignment == align::none;
-  auto const finish = [&](char* out, std::size_t size) {
-    if constexpr (upper) to_upper(out, out + size);
-    put_padded<Spec, align::right>(sink, sign, prefix, 0, std::string_view(out, size), size, zero_pad);
-  };
-
-  // Almost every conversion fits on the stack; only a large precision or a huge %f value
-  // (up to max_exponent10 integral digits) needs the heap, and only then is a string built.
-  char small[128];
-  if (std::size_t const size = render(small, sizeof small - 1); size != 0) [[likely]] {
-    finish(small, size);
+  constexpr std::size_t small_size = 128;
+  // A constant precision this large always fails precision_chars' capacity check, which needs
+  // precision + 1 + precision_chars_overhead (%#g first tries %e at precision - 1), so skip the
+  // stack attempt; MSVC otherwise warns (C4789) that zero_chars overruns `small`. %a, a wider
+  // long double and precisions past max_fast_precision go to std::to_chars, where %g can fit.
+  if constexpr (form::format != std::chars_format::hex && float_layout::fast<F> &&
+                form::precision <= max_fast_precision &&
+                form::precision + precision_chars_overhead > small_size - 1) {
+    write_float_large<Spec>(sink, sign, magnitude);
   } else {
-    std::string large((shortest ? 0 : precision) + std::numeric_limits<F>::max_exponent10 + 32, '\0');
-    std::size_t const large_size = render(large.data(), large.size() - 1);
-    assert(large_size != 0 && "the heap buffer holds any conversion: precision plus max_exponent10 integral digits");
-    finish(large.data(), large_size);
+    char small[small_size];
+    if (std::size_t const size = render_float<Spec>(small, sizeof small - 1, magnitude); size != 0) [[likely]] {
+      finish_float<Spec>(sink, sign, small, size);
+    } else {
+      write_float_large<Spec>(sink, sign, magnitude);
+    }
   }
 }
 

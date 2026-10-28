@@ -10,6 +10,7 @@ if(EAUX_BUILD_TESTS)
       tests/text_test.cpp
       tests/user_type_test.cpp
       tests/output_test.cpp
+      tests/float_chars_test.cpp
     LIBRARIES eaux::text::static_format)
   # Depth limits below the stress test's 64 arguments and 129 segments: recursing per argument
   # or per segment stops it compiling. MSVC has no template-depth switch, so there only the

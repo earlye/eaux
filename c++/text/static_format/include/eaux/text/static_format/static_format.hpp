@@ -68,7 +68,7 @@ class compiled_format {
 
   // Writes to `out` and returns the iterator past the output.
   template <std::output_iterator<char const&> Out, class... Args>
-  Out to(Out out, Args const&... args) const {
+  EAUX_STATIC_FORMAT_ALWAYS_INLINE Out to(Out out, Args const&... args) const {
     if constexpr (detail::char_contiguous<Out>) {
       auto* const first = std::to_address(out);
       detail::pointer_sink sink{first};
@@ -101,12 +101,12 @@ class compiled_format {
 
  private:
   template <class Sink, class... Args>
-  static void render(Sink& sink, Args const&... args) {
+  EAUX_STATIC_FORMAT_ALWAYS_INLINE static void render(Sink& sink, Args const&... args) {
     constexpr std::size_t unused = detail::first_unused_argument(parsed.segments, sizeof...(Args));
     constexpr bool all_used = detail::every_argument_used<Syn, unused, sizeof...(Args)>();
     if constexpr (detail::argument_count<Syn, arguments, sizeof...(Args)>() && all_used) {
       detail::argument_pack<std::index_sequence_for<Args...>, Args...> const pack{{args}...};
-      [&]<std::size_t... I>(std::index_sequence<I...>) {
+      [&]<std::size_t... I>(std::index_sequence<I...>) EAUX_STATIC_FORMAT_ALWAYS_INLINE_LAMBDA {
         (emit<I>(sink, pack), ...);
       }(std::make_index_sequence<info.segments>{});
     }

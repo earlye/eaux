@@ -15,6 +15,17 @@
 #define EAUX_STATIC_FORMAT_NOINLINE [[gnu::noinline]]
 #endif
 
+// Forces the per-call glue (to, render, its segment lambda, write_float) inline: in a caller that
+// formats many fields the renderer otherwise crosses clang's inline cost threshold and is called
+// out of line. The float conversion itself is not forced inline. MSVC has no lambda form.
+#if defined(_MSC_VER) && !defined(__clang__)
+#define EAUX_STATIC_FORMAT_ALWAYS_INLINE __forceinline
+#define EAUX_STATIC_FORMAT_ALWAYS_INLINE_LAMBDA
+#else
+#define EAUX_STATIC_FORMAT_ALWAYS_INLINE [[gnu::always_inline]] inline
+#define EAUX_STATIC_FORMAT_ALWAYS_INLINE_LAMBDA __attribute__((always_inline))
+#endif
+
 // Sinks receive the formatted output in pieces.
 namespace eaux::text::static_format::detail {
 
