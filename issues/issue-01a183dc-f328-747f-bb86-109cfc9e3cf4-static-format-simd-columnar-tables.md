@@ -39,6 +39,11 @@ the same work. In a single row the fields only line up like that when they all s
   `{[...]4v}`) or from another argument (e.g. `{[...]{length-arg-selector}}`). These spellings
   are placeholders.
 - **Columns of different lengths:** what to do is a policy choice.
+- **Columns must be contiguous containers, checked at compile time.** A column argument must
+  satisfy `std::ranges::contiguous_range` (plus `sized_range` when no row-count cap is given).
+  Anything else fails with a `static_assert` diagnostic, so there is no scalar or gather
+  fallback. Accepted: `std::vector`, `std::array`, `std::span` and C arrays. Rejected:
+  `std::list`, `std::deque` and `std::vector<bool>`.
 - **Header, row format and footer** need new syntax, extending the brace syntax.
 
 ## Open questions
@@ -61,8 +66,6 @@ the same work. In a single row the fields only line up like that when they all s
   how to tell scalar arguments (a title, totals) from column arguments when the header or
   footer takes values.
 - **Policies:** how they are selected, in the spec or as a template or type parameter.
-- **Contiguous vs non-contiguous containers:** only contiguous ones allow vector loads. A
-  `std::list` column would need a scalar or gather path.
 
 ## Blocked by
 
