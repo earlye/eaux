@@ -291,11 +291,22 @@ EAUX_STATIC_FORMAT_ALWAYS_INLINE void write_float(Sink& sink, F value) {
     return;
   }
 
-  char small[128];
-  if (std::size_t const size = render_float<Spec>(small, sizeof small - 1, magnitude); size != 0) [[likely]] {
-    finish_float<Spec>(sink, sign, small, size);
-  } else {
+  constexpr std::size_t small_size = 128;
+  // A constant precision this large always fails precision_chars' capacity check, which needs
+  // precision + 1 + precision_chars_overhead (%#g first tries %e at precision - 1), so skip the
+  // stack attempt; MSVC otherwise warns (C4789) that zero_chars overruns `small`. %a, a wider
+  // long double and precisions past max_fast_precision go to std::to_chars, where %g can fit.
+  if constexpr (form::format != std::chars_format::hex && float_layout::fast<F> &&
+                form::precision <= max_fast_precision &&
+                form::precision + precision_chars_overhead > small_size - 1) {
     write_float_large<Spec>(sink, sign, magnitude);
+  } else {
+    char small[small_size];
+    if (std::size_t const size = render_float<Spec>(small, sizeof small - 1, magnitude); size != 0) [[likely]] {
+      finish_float<Spec>(sink, sign, small, size);
+    } else {
+      write_float_large<Spec>(sink, sign, magnitude);
+    }
   }
 }
 

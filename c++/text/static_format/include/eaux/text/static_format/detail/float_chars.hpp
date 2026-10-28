@@ -205,12 +205,16 @@ inline int fixed(double v, int p, char* out) noexcept {
 
 }  // namespace float_digits
 
+// precision_chars needs capacity for this many characters beyond the integral digits and the
+// precision: the decimal point and an exponent. write_float relies on it to skip its stack buffer.
+inline constexpr int precision_chars_overhead = 8;
+
 // v >= 0 and finite. Returns 0 when `capacity` is too small.
 inline std::size_t precision_chars(char* out, std::size_t capacity, double v, std::chars_format format, int p) {
   namespace layout = float_layout;
   int const integral = v < 1 ? 1 : layout::log10_estimate(v) + 2;
   // write_float_large sizes its heap buffer to pass this check (precision + max_exponent10 + 32).
-  if (capacity < static_cast<std::size_t>((format == std::chars_format::fixed ? integral : 1) + p + 8)) return 0;
+  if (capacity < static_cast<std::size_t>((format == std::chars_format::fixed ? integral : 1) + p + precision_chars_overhead)) return 0;
   if (v == 0) return layout::zero_chars(out, format, p);
   using float_digits::undecided;
   if (format == std::chars_format::fixed) {
