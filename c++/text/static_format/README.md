@@ -174,32 +174,48 @@ the `std::string` results: g++'s mixed line is about 25% slower with `_bfmt` and
 The same on an Apple M4 Pro, macOS 15 (Darwin 24.6), CMake Release, Apple clang 17.0 with its
 libc++ 20.1 and Homebrew clang 22.1 with libc++ 22.1, same fmt and Google Benchmark. macOS
 cannot pin a process to a core, so these runs are unpinned. Commit
-`b4862f2fa7d840a8e96e63cd749903588b31129a`, before the vendored float conversion:
+`3a0f66acca09cfb9a80e395530469ca16917ced5`, with the vendored float conversion:
 
 | case | snprintf | std::format_to | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
 |---|---:|---:|---:|---:|---:|
-| `0x%02X`, Apple clang 17.0 | 26.6 | 25.2 | 6.5 | **5.3** | 5.5 |
-| `0x%02X`, clang 22.1 | 27.2 | 27.3 | **6.6** | 9.9 | 9.7 |
-| `%8.3f`, Apple clang | 83.0 | 47.8 | **22.0** | 22.8 | 22.3 |
-| `%8.3f`, clang | 85.9 | 48.2 | 21.7 | **20.8** | 21.4 |
-| short mixed line, Apple clang | 146 | 106 | **32.0** | 32.9 | 32.8 |
-| short mixed line, clang | 152 | 111 | 33.2 | **33.2** | 33.8 |
-| 30-argument row, Apple clang | 2153 | 1486 | 1193 | **693** | 696 |
-| 30-argument row, clang | 2240 | 1511 | 1193 | **707** | 714 |
-| row, `ascii_string_view` labels, Apple clang | | | | 693 | 687 |
-| row, `ascii_string_view` labels, clang | | | | 691 | 717 |
+| `0x%02X`, Apple clang 17.0 | 26.3 | 24.8 | 6.4 | 5.6 | **5.5** |
+| `0x%02X`, clang 22.1 | 27.1 | 33.8 | **6.5** | 10.0 | 10.2 |
+| `%8.3f`, Apple clang | 79.6 | 47.0 | 21.6 | 16.5 | **16.3** |
+| `%8.3f`, clang | 82.2 | 48.0 | 21.1 | 11.4 | **11.2** |
+| shortest `{}`, Apple clang | | 44.3 | **12.3** | | 26.3 |
+| shortest `{}`, clang | | 48.1 | **12.2** | | 27.3 |
+| `%g`, Apple clang | 70.1 | 56.6 | **16.9** | 17.8 | 17.4 |
+| `%g`, clang | 71.7 | 59.3 | **17.0** | 17.6 | 17.9 |
+| `%e`, Apple clang | 91.3 | 41.1 | 15.9 | **10.3** | 10.4 |
+| `%e`, clang | 92.4 | 41.1 | 16.4 | 9.7 | **9.4** |
+| float batch (48 fields), Apple clang | 3630 | 2427 | 899 | 565 | **564** |
+| float batch (48 fields), clang | 3747 | 2482 | 883 | **581** | 589 |
+| short mixed line, Apple clang | 148 | 105 | 31.4 | 26.2 | **26.1** |
+| short mixed line, clang | 148 | 107 | 31.1 | 20.9 | **20.7** |
+| 30-argument row, Apple clang | 2115 | 1493 | 1193 | 503 | **490** |
+| 30-argument row, clang | 2183 | 1511 | 1158 | **324** | 337 |
+| row, `ascii_string_view` labels, Apple clang | | | | 496 | **494** |
+| row, `ascii_string_view` labels, clang | | | | **321** | 334 |
 
 | returning `std::string` | std::format | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
 |---|---:|---:|---:|---:|
-| `0x%02X`, Apple clang | 27.0 | **10.3** | 14.4 | 15.5 |
-| `0x%02X`, clang | 29.1 | 9.9 | **9.9** | 10.0 |
-| short mixed line, Apple clang | 121 | 82.7 | **55.5** | 56.4 |
-| short mixed line, clang | 127 | 82.5 | 56.1 | **55.8** |
-| 30-argument row, Apple clang | 1592 | 1659 | **823** | 824 |
-| 30-argument row, clang | 1615 | 1619 | **828** | 829 |
+| `0x%02X`, Apple clang | 27.2 | **10.5** | 17.2 | 17.3 |
+| `0x%02X`, clang | 35.7 | **9.6** | 15.6 | 13.3 |
+| short mixed line, Apple clang | 122 | 85.1 | **47.2** | 47.4 |
+| short mixed line, clang | 125 | 82.9 | **43.3** | 43.7 |
+| 30-argument row, Apple clang | 1603 | 1722 | **565** | 571 |
+| 30-argument row, clang | 1597 | 1616 | **433** | 434 |
 
-Here `%8.3f` and the short mixed line are within 4% of `FMT_COMPILE` either way. It loses on the
-tiny `0x%02X`: about 50% (3 ns) slower into a buffer under clang 22.1, and about 40% (4 ns)
-slower returned as `std::string` under Apple clang; with the other compiler it is level or
-ahead in each. The 30-argument row is 40-42% faster into a buffer and about half the time
-returned as `std::string`, and the mixed line returned as `std::string` about a third faster.
+Where it loses to `FMT_COMPILE`:
+
+- Shortest `{}` on a double: about 2.1x under Apple clang and 2.2x under clang 22.1, a much
+  wider gap than on Linux.
+- `%g`: 3-4% slower under both compilers.
+- The tiny `0x%02X`: about 55% (3.5 ns) slower into a buffer under clang 22.1, and 39-64%
+  (4-7 ns) slower returned as `std::string` under both.
+
+It is ahead in every other case. The vendored conversion puts `%8.3f` 25% (Apple clang) and 47%
+(clang 22.1) ahead of `FMT_COMPILE`, where it was level before, and `%e` 35-43% ahead. The float
+batch is 34-37% faster, the 30-argument row 59% (Apple clang) and 72% (clang 22.1) faster into a
+buffer, and returned as `std::string` the row takes a quarter to a third of `FMT_COMPILE`'s time and
+the mixed line a little over half.
