@@ -23,7 +23,11 @@ namespace detail = eaux::text::static_format::detail;
 
 namespace {
 
-constexpr std::size_t capacity = 1100;  // %.17f of DBL_MAX, with room to spare
+constexpr std::size_t capacity = 1500;  // %.1074f of DBL_MAX, with room to spare
+
+// Precisions above 17 that %f of small values still takes the fast path for, up to the 1074
+// digits after the point of the smallest subnormal.
+constexpr std::size_t large_precisions[] = {18, 20, 25, 40, 100, 120, 330, 340, 1074};
 
 // Values that catch layout and rounding mistakes: zeros, the extremes, powers of ten and their
 // neighbours, exact binary ties (x.5, x.125), decimal near-ties (x.xxx5 rounded to binary), and
@@ -59,7 +63,8 @@ std::vector<double> edge_values() {
   std::mt19937_64 rng(20261027);
   for (int decimals = 0; decimals <= 17; ++decimals) {
     for (int i = 0; i < 40; ++i) {
-      // d.ddd...5 with `decimals` digits after the point, then a 5.
+      // ddd.ddd...5 (up to three integral digits, `decimals` digits after the point, then a 5),
+      // the same just below it, and runs of nines ending in 5.
       std::string s = std::to_string(rng() % 1000) + ".";
       for (int d = 0; d < decimals; ++d) s += static_cast<char>('0' + rng() % 10);
       v.push_back(std::strtod((s + "5").c_str(), nullptr));
@@ -132,6 +137,11 @@ void check_precisions(std::vector<double> const& values) {
       m.check(v, std::chars_format::scientific, p);
       m.check(v, std::chars_format::general, p);
     }
+    for (std::size_t const p : large_precisions) {
+      m.check(v, std::chars_format::fixed, p);
+      m.check(v, std::chars_format::scientific, p);
+      m.check(v, std::chars_format::general, p);
+    }
     m.check(v, std::chars_format::general, detail::no_precision);
     if (float const f = static_cast<float>(v); std::isfinite(f)) {
       m.check(f, std::chars_format::general, detail::no_precision);
@@ -156,11 +166,33 @@ std::string c_printf(char const* format, Args... args) {
   return out;
 }
 
+// Writes into exactly `size` bytes followed by guard bytes, which must stay untouched. Every
+// capacity near the reference length either fits the reference exactly or returns 0.
+template <class F>
+void check_capacities(mismatches& m, F value, std::chars_format format, std::size_t precision) {
+  constexpr std::size_t guard = 32;
+  std::string const want = reference(value, format, precision);
+  std::size_t const from = want.size() > 10 ? want.size() - 10 : 0;
+  for (std::size_t size = from; size <= want.size() + 10; ++size) {
+    std::string buffer(size + guard, '#');
+    std::size_t const n = precision == detail::no_precision
+                              ? detail::shortest_chars(buffer.data(), size, value)
+                              : detail::float_chars(buffer.data(), size, value, format, precision);
+    bool const guards_intact = buffer.find_first_not_of('#', size) == std::string::npos;
+    if (guards_intact && (n == 0 || buffer.substr(0, n) == want)) continue;
+    if (m.count++ < 5) {
+      m.first += c_printf("%a", static_cast<double>(value)) + " format " + std::to_string(static_cast<int>(format)) +
+                 " precision " + std::to_string(precision) + " capacity " + std::to_string(size) + ": got " +
+                 buffer.substr(0, std::min(n, size)) + (guards_intact ? "" : " past the end") + "\n";
+    }
+  }
+}
+
 }  // namespace
 
-TEST_CASE("float conversion matches std::to_chars on edge cases, precisions 0-17") { check_precisions(edge_values()); }
+TEST_CASE("float conversion matches std::to_chars on edge cases") { check_precisions(edge_values()); }
 
-TEST_CASE("float conversion matches std::to_chars on random doubles, precisions 0-17") {
+TEST_CASE("float conversion matches std::to_chars on random doubles") {
   check_precisions(random_values(40000));
 }
 
@@ -177,10 +209,30 @@ TEST_CASE("float conversion matches std::to_chars in shortest form") {
     m.check(d, std::chars_format::general, detail::no_precision);
     if (float const f = static_cast<float>(d); std::isfinite(f)) m.check(f, std::chars_format::general, detail::no_precision);
   }
-  // Integers from 2^53 (2^24 for float), which std::to_chars prints exactly in fixed form.
+  // Integers on both sides of 2^53 (2^24 for float): above it std::to_chars prints them exactly in
+  // fixed form.
   for (int i = 0; i < 100000; ++i) {
     m.check(static_cast<double>(rng() >> (rng() % 40)), std::chars_format::general, detail::no_precision);
     m.check(static_cast<float>(rng() >> (rng() % 60)), std::chars_format::general, detail::no_precision);
+  }
+  INFO(m.first);
+  CHECK(m.count == 0);
+}
+
+TEST_CASE("float conversion writes nothing past its capacity and returns 0 when it does not fit") {
+  constexpr std::size_t precisions[] = {0, 1, 3, 6, 10, 16, 17, 18, 25, 100, 330};
+  mismatches m;
+  for (double const d : edge_values()) {
+    double const v = std::fabs(d);
+    for (std::size_t const p : precisions) {
+      check_capacities(m, v, std::chars_format::fixed, p);
+      check_capacities(m, v, std::chars_format::scientific, p);
+      check_capacities(m, v, std::chars_format::general, p);
+    }
+    check_capacities(m, v, std::chars_format::general, detail::no_precision);
+    if (float const f = static_cast<float>(v); std::isfinite(f)) {
+      check_capacities(m, f, std::chars_format::general, detail::no_precision);
+    }
   }
   INFO(m.first);
   CHECK(m.count == 0);

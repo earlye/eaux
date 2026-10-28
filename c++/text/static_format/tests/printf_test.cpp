@@ -117,6 +117,7 @@ TEST_CASE("infinity and NaN ignore zero padding") {
 
 TEST_CASE("a large precision falls back to a heap buffer") {
   CHECK_PRINTF("%.200f", 1.0 / 3);
+  CHECK_PRINTF("%.330f|%.25f", 4.9e-324, 1.5e-12);  // tiny values stay on the fast path
   CHECK("%.400f"_pfmt(1.0).size() == 402);
 }
 
