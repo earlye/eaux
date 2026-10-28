@@ -165,8 +165,8 @@ precision float field (`%8.3f` 48 to 20 ns, about 320 instructions where libstdc
 and puts static_format ahead of `FMT_COMPILE` there.
 
 `to`, `render`, its segment lambda and `write_float` are forced inline
-(`EAUX_STATIC_FORMAT_ALWAYS_INLINE`); the float conversion itself is not forced inline. Without
-it, clang calls the renderer out of line in many-field callers. Forcing it makes the float batch
-28% faster under clang and 17-21% under g++, and leaves single fields within 3%. The cost is in
+(`EAUX_STATIC_FORMAT_ALWAYS_INLINE`); the float conversion itself is not. Without the forced
+inlining, clang calls the renderer out of line in many-field callers. With it, the float batch is
+28% faster under clang and 17-21% under g++, and single fields stay within 3%. The cost is in
 the `std::string` results: g++'s mixed line is about 25% slower with `_bfmt` and 6% with
 `_pfmt`, and clang's `_bfmt` row about 10%.
