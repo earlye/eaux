@@ -2,8 +2,10 @@
 // (include/dragonbox/dragonbox.h at commit beeeef91cf6fef89a4d4ba5e95d47ca64ccb3a44), used under the Boost Software License 1.0,
 // one of the two licences the upstream offers. Changes from upstream: the include guard is
 // renamed, the namespace is eaux::text::static_format::detail::jkj instead of JKJ_NAMESPACE, the
-// user config-header hook is removed, and the file is marked a system header so the tests'
-// warning flags skip it.
+// user config-header hook is removed, the user config macros (JKJ_STATIC_DATA_SECTION,
+// JKJ_READ_STATIC_DATA, JKJ_STD_REPLACEMENT_NAMESPACE, JKJ_FAST_MUL64, JKJ_DRAGONBOX_LEAK_MACROS)
+// are no longer read, so a user's settings for their own Dragonbox cannot change this copy, and
+// the file is marked a system header so GCC's and Clang's warning flags skip it.
 //
 // Boost Software License - Version 1.0 - August 17th, 2003
 //
@@ -51,81 +53,35 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
 // KIND, either express or implied.
 
-// We want to achieve the followings regarding the macro leakage of this header file:
-//   - Normally, no macro other than the header guard EAUX_STATIC_FORMAT_DETAIL_DRAGONBOX is leaked.
-//   - For internal library use, macros defined below are leaked if explicitly requested.
-//   - This header file does not include any other header file in this library.
-//   - The order of inclusions and repeated inclusions of header files in this library must not matter.
-// To achieve all of these at once, we do some preprocessing hack:
-//   - Macros are populated if EAUX_STATIC_FORMAT_DETAIL_DRAGONBOX is not defined (which means the header file is being
-//   included for the first time), or JKJ_DRAGONBOX_LEAK_MACROS is defined and
-//   JKJ_DRAGONBOX_MACROS_DEFINED is not defined at the same time.
-//   - JKJ_DRAGONBOX_MACROS_DEFINED is defined at the end of this header file if (and only if)
-//   JKJ_DRAGONBOX_LEAK_MACROS is defined.
-//   - The actual content (excluding the macros) of this header file is guarded by EAUX_STATIC_FORMAT_DETAIL_DRAGONBOX
-//   as usual.
-//   - JKJ_DRAGONBOX_MACROS_DEFINED and all macros defined below except for EAUX_STATIC_FORMAT_DETAIL_DRAGONBOX are
-//   #undef-ed at the end of this header if JKJ_DRAGONBOX_LEAK_MACROS is not defined.
+// No macro other than the header guard EAUX_STATIC_FORMAT_DETAIL_DRAGONBOX is leaked: all macros
+// defined below are #undef-ed at the end of this header.
 
 #ifndef EAUX_STATIC_FORMAT_DETAIL_DRAGONBOX
-    // User-provided header file that contains declarations of custom implementations and config macros.
-#endif
+    #include <cassert>
+    #include <cstdint>
+    #include <cstring>
+    #include <limits>
+    #include <type_traits>
 
-#if !defined(EAUX_STATIC_FORMAT_DETAIL_DRAGONBOX) ||                                                                  \
-    (defined(JKJ_DRAGONBOX_LEAK_MACROS) && !defined(JKJ_DRAGONBOX_MACROS_DEFINED))
-    // Users vendoring this library are advised to define the macro JKJ_NAMESPACE to avoid potential
-    // clash with other libraries vendoring this library. Every (non-macro) entity in this library will
-    // live inside the namespace JKJ_NAMESPACE, whose default is "jkj".
-    #ifndef JKJ_NAMESPACE
-        #define JKJ_NAMESPACE jkj
-    #else
-        #define JKJ_NAMESPACE_DEFINED 1
-    #endif
-
-    // Attribute for storing static data into a dedicated place, e.g. flash memory. Every ODR-used
-    // static data declaration will be decorated with this macro. The users may define this macro,
-    // before including the library headers, into whatever they want.
-    #ifndef JKJ_STATIC_DATA_SECTION
-        #define JKJ_STATIC_DATA_SECTION
-    #else
-        #define JKJ_STATIC_DATA_SECTION_DEFINED 1
-    #endif
-
-    // To use the library with toolchains without standard C++ headers, the users may define this macro
-    // into their custom namespace which contains the definitions of all the standard C++ library
-    // features used in this header. (The list can be found below.)
-    #ifndef JKJ_STD_REPLACEMENT_NAMESPACE
-        #define JKJ_STD_REPLACEMENT_NAMESPACE std
-        #include <cassert>
-        #include <cstdint>
-        #include <cstring>
-        #include <limits>
-        #include <type_traits>
-
-        #ifdef __has_include
-            #if __has_include(<version>)
-                #include <version>
-            #endif
+    #ifdef __has_include
+        #if __has_include(<version>)
+            #include <version>
         #endif
-    #else
-        #define JKJ_STD_REPLACEMENT_NAMESPACE_DEFINED 1
     #endif
 
     // The compressed cache handling for IEEE-754 binary32 performs 64-bit x 32-bit -> 96-bit
     // multiplication. The library chooses between 64-bit + 32-bit and 32-bit + 64-bit splittings of the
     // 96-bit result depending on availability of fast 64-bit x 64-bit -> 64-bit multiplication of
-    // unsigned integers. By default, the latter is used if and only if one of the macros listed below
-    // is defined, but the user can override this behavior by defining JKJ_FAST_MUL64. This should have
-    // no impact on the codegen if compact cache for IEEE-754 binary32 is not used.
-    #ifndef JKJ_FAST_MUL64
-        #if defined(__x86_64__) || defined(__aarch64__) || defined(__ppc64__) || defined(_M_X64) ||    \
-            defined(_M_ARM64)
-            #define JKJ_FAST_MUL64 1
-        #else
-            #define JKJ_FAST_MUL64 0
-        #endif
+    // unsigned integers. The latter is used if and only if one of the macros listed below is defined.
+    // This should have no impact on the codegen if compact cache for IEEE-754 binary32 is not used.
+    // A user's JKJ_FAST_MUL64 is replaced, and restored at the end of this header.
+    #pragma push_macro("JKJ_FAST_MUL64")
+    #undef JKJ_FAST_MUL64
+    #if defined(__x86_64__) || defined(__aarch64__) || defined(__ppc64__) || defined(_M_X64) ||        \
+        defined(_M_ARM64)
+        #define JKJ_FAST_MUL64 1
     #else
-        #define JKJ_FAST_MUL64_DEFINED 1
+        #define JKJ_FAST_MUL64 0
     #endif
 
     ////////////////////////////////////////////////////////////////////////////////////////
@@ -206,13 +162,7 @@
     #endif
 
     // C++20 std::bit_cast
-    #if JKJ_STD_REPLACEMENT_NAMESPACE_DEFINED
-        #if JKJ_STD_REPLACEMENT_HAS_BIT_CAST
-            #define JKJ_HAS_BIT_CAST 1
-        #else
-            #define JKJ_HAS_BIT_CAST 0
-        #endif
-    #elif defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
+    #if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
         #include <bit>
         #define JKJ_HAS_BIT_CAST 1
     #else
@@ -225,23 +175,6 @@
         #define JKJ_IF_NOT_CONSTEVAL if !consteval
         #define JKJ_CAN_BRANCH_ON_CONSTEVAL 1
         #define JKJ_USE_IS_CONSTANT_EVALUATED 0
-    #elif JKJ_STD_REPLACEMENT_NAMESPACE_DEFINED
-        #if JKJ_STD_REPLACEMENT_HAS_IS_CONSTANT_EVALUATED
-            #define JKJ_IF_CONSTEVAL if (stdr::is_constant_evaluated())
-            #define JKJ_IF_NOT_CONSTEVAL if (!stdr::is_constant_evaluated())
-            #define JKJ_CAN_BRANCH_ON_CONSTEVAL 1
-            #define JKJ_USE_IS_CONSTANT_EVALUATED 1
-        #elif JKJ_HAS_IF_CONSTEXPR
-            #define JKJ_IF_CONSTEVAL if constexpr (false)
-            #define JKJ_IF_NOT_CONSTEVAL if constexpr (true)
-            #define JKJ_CAN_BRANCH_ON_CONSTEVAL 0
-            #define JKJ_USE_IS_CONSTANT_EVALUATED 0
-        #else
-            #define JKJ_IF_CONSTEVAL if (false)
-            #define JKJ_IF_NOT_CONSTEVAL if (true)
-            #define JKJ_CAN_BRANCH_ON_CONSTEVAL 0
-            #define JKJ_USE_IS_CONSTANT_EVALUATED 0
-        #endif
     #else
         #if defined(__cpp_lib_is_constant_evaluated) && __cpp_lib_is_constant_evaluated >= 201811L
             #define JKJ_IF_CONSTEVAL if (stdr::is_constant_evaluated())
@@ -306,63 +239,63 @@ namespace eaux::text::static_format::detail::jkj {
             namespace stdr {
                 // <bit>
     #if JKJ_HAS_BIT_CAST
-                using JKJ_STD_REPLACEMENT_NAMESPACE::bit_cast;
+                using std::bit_cast;
     #endif
 
                 // <cassert>
                 // We need assert() macro, but it is not namespaced anyway, so nothing to do here.
 
                 // <cstdint>
-                using JKJ_STD_REPLACEMENT_NAMESPACE::int_least8_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::int_least16_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::int_least32_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::int_fast8_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::int_fast16_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::int_fast32_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::uint_least8_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::uint_least16_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::uint_least32_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::uint_least64_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::uint_fast8_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::uint_fast16_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::uint_fast32_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::uint_fast64_t;
+                using std::int_least8_t;
+                using std::int_least16_t;
+                using std::int_least32_t;
+                using std::int_fast8_t;
+                using std::int_fast16_t;
+                using std::int_fast32_t;
+                using std::uint_least8_t;
+                using std::uint_least16_t;
+                using std::uint_least32_t;
+                using std::uint_least64_t;
+                using std::uint_fast8_t;
+                using std::uint_fast16_t;
+                using std::uint_fast32_t;
+                using std::uint_fast64_t;
                 // We need INT32_C, UINT32_C and UINT64_C macros too, but again there is nothing to do
                 // here.
 
                 // <cstring>
-                using JKJ_STD_REPLACEMENT_NAMESPACE::size_t;
-                using JKJ_STD_REPLACEMENT_NAMESPACE::memcpy;
+                using std::size_t;
+                using std::memcpy;
 
                 // <limits>
                 template <class T>
-                using numeric_limits = JKJ_STD_REPLACEMENT_NAMESPACE::numeric_limits<T>;
+                using numeric_limits = std::numeric_limits<T>;
 
                 // <type_traits>
                 template <bool cond, class T = void>
-                using enable_if = JKJ_STD_REPLACEMENT_NAMESPACE::enable_if<cond, T>;
+                using enable_if = std::enable_if<cond, T>;
                 template <class T>
-                using add_rvalue_reference = JKJ_STD_REPLACEMENT_NAMESPACE::add_rvalue_reference<T>;
+                using add_rvalue_reference = std::add_rvalue_reference<T>;
                 template <bool cond, class T_true, class T_false>
-                using conditional = JKJ_STD_REPLACEMENT_NAMESPACE::conditional<cond, T_true, T_false>;
+                using conditional = std::conditional<cond, T_true, T_false>;
     #if JKJ_USE_IS_CONSTANT_EVALUATED
-                using JKJ_STD_REPLACEMENT_NAMESPACE::is_constant_evaluated;
+                using std::is_constant_evaluated;
     #endif
                 template <class T1, class T2>
-                using is_same = JKJ_STD_REPLACEMENT_NAMESPACE::is_same<T1, T2>;
+                using is_same = std::is_same<T1, T2>;
     #if !JKJ_HAS_BIT_CAST
                 template <class T>
-                using is_trivially_copyable = JKJ_STD_REPLACEMENT_NAMESPACE::is_trivially_copyable<T>;
+                using is_trivially_copyable = std::is_trivially_copyable<T>;
     #endif
                 template <class T>
-                using is_integral = JKJ_STD_REPLACEMENT_NAMESPACE::is_integral<T>;
+                using is_integral = std::is_integral<T>;
                 template <class T>
-                using is_signed = JKJ_STD_REPLACEMENT_NAMESPACE::is_signed<T>;
+                using is_signed = std::is_signed<T>;
                 template <class T>
-                using is_unsigned = JKJ_STD_REPLACEMENT_NAMESPACE::is_unsigned<T>;
+                using is_unsigned = std::is_unsigned<T>;
 
                 template <class T>
-                using make_unsigned = JKJ_STD_REPLACEMENT_NAMESPACE::make_unsigned<T>;
+                using make_unsigned = std::make_unsigned<T>;
             }
         }
 
@@ -409,19 +342,9 @@ namespace eaux::text::static_format::detail::jkj {
                 JKJ_CONSTEXPR14 T& operator[](stdr::size_t idx) noexcept { return data_[idx]; }
             };
 
-            // Platforms may require special instructions for reading static data declared with
-            // JKJ_STATIC_DATA_SECTION. Users can specify such instructions by defining the macro
-            // JKJ_READ_STATIC_DATA.
             template <class T>
             JKJ_CONSTEXPR20 T read_static_data(T const* ptr) noexcept {
-                JKJ_IF_CONSTEVAL { return *ptr; }
-                else {
-    #ifdef JKJ_READ_STATIC_DATA
-                    return JKJ_READ_STATIC_DATA(ptr);
-    #else
-                    return *ptr;
-    #endif
-                }
+                return *ptr;
             }
         }
 
@@ -1584,7 +1507,7 @@ namespace eaux::text::static_format::detail::jkj {
             static constexpr int min_k = -31;
             static constexpr int max_k = 46;
             static constexpr detail::array<cache_entry_type, detail::stdr::size_t(max_k - min_k + 1)>
-                cache JKJ_STATIC_DATA_SECTION = {
+                cache = {
                     {UINT64_C(0x81ceb32c4b43fcf5), UINT64_C(0xa2425ff75e14fc32),
                      UINT64_C(0xcad2f7f5359a3b3f), UINT64_C(0xfd87b5f28300ca0e),
                      UINT64_C(0x9e74d1b791e07e49), UINT64_C(0xc612062576589ddb),
@@ -1640,7 +1563,7 @@ namespace eaux::text::static_format::detail::jkj {
             static constexpr int min_k = -292;
             static constexpr int max_k = 326;
             static constexpr detail::array<cache_entry_type, detail::stdr::size_t(max_k - min_k + 1)>
-                cache JKJ_STATIC_DATA_SECTION = {
+                cache = {
                     {{UINT64_C(0xff77b1fcbebcdc4f), UINT64_C(0x25e8e89c13bb0f7b)},
                      {UINT64_C(0x9faacf3df73609b1), UINT64_C(0x77b191618c54e9ad)},
                      {UINT64_C(0xc795830d75038c1d), UINT64_C(0xd59df5b9ef6a2418)},
@@ -2299,14 +2222,14 @@ namespace eaux::text::static_format::detail::jkj {
             using pow5_holder_t = detail::array<detail::stdr::uint_least16_t, pow5_table_size>;
 
     #if JKJ_HAS_CONSTEXPR17
-            static constexpr cache_holder_t cache JKJ_STATIC_DATA_SECTION = [] {
+            static constexpr cache_holder_t cache = [] {
                 cache_holder_t res{};
                 for (detail::stdr::size_t i = 0; i < compressed_table_size; ++i) {
                     res[i] = cache_holder<ieee754_binary32>::cache[i * compression_ratio];
                 }
                 return res;
             }();
-            static constexpr pow5_holder_t pow5_table JKJ_STATIC_DATA_SECTION = [] {
+            static constexpr pow5_holder_t pow5_table = [] {
                 pow5_holder_t res{};
                 detail::stdr::uint_least16_t p = 1;
                 for (detail::stdr::size_t i = 0; i < pow5_table_size; ++i) {
@@ -2320,14 +2243,14 @@ namespace eaux::text::static_format::detail::jkj {
             static constexpr cache_holder_t make_cache(detail::index_sequence<indices...>) {
                 return {cache_holder<ieee754_binary32>::cache[indices * compression_ratio]...};
             }
-            static constexpr cache_holder_t cache JKJ_STATIC_DATA_SECTION =
+            static constexpr cache_holder_t cache =
                 make_cache(detail::make_index_sequence<compressed_table_size>{});
 
             template <detail::stdr::size_t... indices>
             static constexpr pow5_holder_t make_pow5_table(detail::index_sequence<indices...>) {
                 return {detail::compute_power<indices>(detail::stdr::uint_least16_t(5))...};
             }
-            static constexpr pow5_holder_t pow5_table JKJ_STATIC_DATA_SECTION =
+            static constexpr pow5_holder_t pow5_table =
                 make_pow5_table(detail::make_index_sequence<pow5_table_size>{});
     #endif
 
@@ -2414,14 +2337,14 @@ namespace eaux::text::static_format::detail::jkj {
             using pow5_holder_t = detail::array<detail::stdr::uint_least64_t, pow5_table_size>;
 
     #if JKJ_HAS_CONSTEXPR17
-            static constexpr cache_holder_t cache JKJ_STATIC_DATA_SECTION = [] {
+            static constexpr cache_holder_t cache = [] {
                 cache_holder_t res{};
                 for (detail::stdr::size_t i = 0; i < compressed_table_size; ++i) {
                     res[i] = cache_holder<ieee754_binary64>::cache[i * compression_ratio];
                 }
                 return res;
             }();
-            static constexpr pow5_holder_t pow5_table JKJ_STATIC_DATA_SECTION = [] {
+            static constexpr pow5_holder_t pow5_table = [] {
                 pow5_holder_t res{};
                 detail::stdr::uint_least64_t p = 1;
                 for (detail::stdr::size_t i = 0; i < pow5_table_size; ++i) {
@@ -2435,14 +2358,14 @@ namespace eaux::text::static_format::detail::jkj {
             static constexpr cache_holder_t make_cache(detail::index_sequence<indices...>) {
                 return {cache_holder<ieee754_binary64>::cache[indices * compression_ratio]...};
             }
-            static constexpr cache_holder_t cache JKJ_STATIC_DATA_SECTION =
+            static constexpr cache_holder_t cache =
                 make_cache(detail::make_index_sequence<compressed_table_size>{});
 
             template <detail::stdr::size_t... indices>
             static constexpr pow5_holder_t make_pow5_table(detail::index_sequence<indices...>) {
                 return {detail::compute_power<indices>(detail::stdr::uint_least64_t(5))...};
             }
-            static constexpr pow5_holder_t pow5_table JKJ_STATIC_DATA_SECTION =
+            static constexpr pow5_holder_t pow5_table =
                 make_pow5_table(detail::make_index_sequence<pow5_table_size>{});
     #endif
 
@@ -4429,45 +4352,22 @@ namespace eaux::text::static_format::detail::jkj {
 
 #endif
 
-#ifdef JKJ_DRAGONBOX_LEAK_MACROS
-    #define JKJ_DRAGONBOX_MACROS_DEFINED
-#else
-    #undef JKJ_HAS_BUILTIN
-    #undef JKJ_FORCEINLINE
-    #undef JKJ_SAFEBUFFERS
-    #undef JKJ_CONSTEXPR20
-    #undef JKJ_USE_IS_CONSTANT_EVALUATED
-    #undef JKJ_CAN_BRANCH_ON_CONSTEVAL
-    #undef JKJ_IF_NOT_CONSTEVAL
-    #undef JKJ_IF_CONSTEVAL
-    #undef JKJ_HAS_BIT_CAST
-    #undef JKJ_IF_CONSTEXPR
-    #undef JKJ_HAS_IF_CONSTEXPR
-    #undef JKJ_INLINE_VARIABLE
-    #undef JKJ_HAS_INLINE_VARIABLE
-    #undef JKJ_HAS_CONSTEXPR17
-    #undef JKJ_CONSTEXPR14
-    #undef JKJ_HAS_CONSTEXPR14
-    #undef JKJ_HAS_VARIABLE_TEMPLATES
-    #if JKJ_FAST_MUL64_DEFINED
-        #undef JKJ_FAST_MUL64_DEFINED
-    #else
-        #undef JKJ_FAST_MUL64
-    #endif
-    #if JKJ_STD_REPLACEMENT_NAMESPACE_DEFINED
-        #undef JKJ_STD_REPLACEMENT_NAMESPACE_DEFINED
-    #else
-        #undef JKJ_STD_REPLACEMENT_NAMESPACE
-    #endif
-    #if JKJ_STATIC_DATA_SECTION_DEFINED
-        #undef JKJ_STATIC_DATA_SECTION_DEFINED
-    #else
-        #undef JKJ_STATIC_DATA_SECTION
-    #endif
-    #if JKJ_NAMESPACE_DEFINED
-        #undef JKJ_NAMESPACE_DEFINED
-    #else
-        #undef JKJ_NAMESPACE
-    #endif
-    #undef JKJ_DRAGONBOX_MACROS_DEFINED
-#endif
+#undef JKJ_HAS_BUILTIN
+#undef JKJ_FORCEINLINE
+#undef JKJ_SAFEBUFFERS
+#undef JKJ_CONSTEXPR20
+#undef JKJ_USE_IS_CONSTANT_EVALUATED
+#undef JKJ_CAN_BRANCH_ON_CONSTEVAL
+#undef JKJ_IF_NOT_CONSTEVAL
+#undef JKJ_IF_CONSTEVAL
+#undef JKJ_HAS_BIT_CAST
+#undef JKJ_IF_CONSTEXPR
+#undef JKJ_HAS_IF_CONSTEXPR
+#undef JKJ_INLINE_VARIABLE
+#undef JKJ_HAS_INLINE_VARIABLE
+#undef JKJ_HAS_CONSTEXPR17
+#undef JKJ_CONSTEXPR14
+#undef JKJ_HAS_CONSTEXPR14
+#undef JKJ_HAS_VARIABLE_TEMPLATES
+#undef JKJ_FAST_MUL64
+#pragma pop_macro("JKJ_FAST_MUL64")
