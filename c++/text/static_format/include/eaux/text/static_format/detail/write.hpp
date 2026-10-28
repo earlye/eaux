@@ -20,12 +20,12 @@
 
 // Writers for the built-in argument kinds. Each takes its field_spec as a template argument, so
 // the branches on flags, width and conversion fold away and only the conversion itself runs.
-// Integers are converted with std::to_chars and floats by the backend in float_chars.hpp, so both
-// are always "C"-locale.
+// Integers are converted with std::to_chars and floats by float_chars.hpp (Dragonbox and a port of
+// fmt's digits), so both are always "C"-locale.
 namespace eaux::text::static_format::detail {
 
-// The fill is a template argument so a one-byte fill folds to sink.fill and inlines; taking it
-// as a runtime argument left g++ calling put_fill out of line for every padded field.
+// The fill is a template argument so a one-byte fill folds to sink.fill and inlines; with a
+// runtime fill, g++ calls put_fill out of line for every padded field.
 template <fill_char Fill, class Sink>
 void put_fill(Sink& sink, std::size_t n) {
   if constexpr (Fill.size == 1) {
@@ -226,7 +226,7 @@ struct float_form {
 };
 
 // Renders a non-negative finite value; returns the length, or 0 when `capacity` is too small.
-// Leaves one byte spare for the decimal point that # may insert.
+// `capacity` must be one less than the buffer, so # can insert a decimal point.
 template <field_spec Spec, std::floating_point F>
 std::size_t render_float(char* out, std::size_t capacity, F magnitude) {
   using form = float_form<Spec>;
@@ -268,6 +268,7 @@ void finish_float(Sink& sink, std::string_view sign, char* out, std::size_t size
 
 // Only a large precision or a huge %f value (up to max_exponent10 integral digits) overflows the
 // stack buffer. Out of line, so the std::string and its unwinding stay out of write_float's frame.
+// The size must cover precision_chars' capacity check (integral digits + precision + 8).
 template <field_spec Spec, class Sink, std::floating_point F>
 EAUX_STATIC_FORMAT_NOINLINE void write_float_large(Sink& sink, std::string_view sign, F magnitude) {
   using form = float_form<Spec>;

@@ -36,15 +36,14 @@
 
 namespace eaux::text::static_format::detail::fmt_port {
 
-inline void write2digits(char* out, std::uint32_t value) noexcept {
-  static constexpr char digits[] =
-      "0001020304050607080910111213141516171819"
-      "2021222324252627282930313233343536373839"
-      "4041424344454647484950515253545556575859"
-      "6061626364656667686970717273747576777879"
-      "8081828384858687888990919293949596979899";
-  std::memcpy(out, digits + value * 2, 2);
-}
+inline constexpr char digit_pairs[] =
+    "0001020304050607080910111213141516171819"
+    "2021222324252627282930313233343536373839"
+    "4041424344454647484950515253545556575859"
+    "6061626364656667686970717273747576777879"
+    "8081828384858687888990919293949596979899";
+
+inline void write2digits(char* out, std::uint32_t value) noexcept { std::memcpy(out, digit_pairs + value * 2, 2); }
 
 using db_uint128 = jkj::dragonbox::detail::wuint::uint128;
 
@@ -77,7 +76,8 @@ constexpr std::uint32_t fractional_part_rounding_thresholds(int index) noexcept 
 // false when the digits need more than its first 64-bit segment (where fmt uses Dragon4).
 // `precision` is the number of significant digits for scientific form, or of digits after the
 // point when `fixed`; on return it is the number of digits written. The value is
-// digits * 10^exp. `buf` needs room for precision + 1 digits.
+// digits * 10^exp. `buf` needs room for the significant digits plus one: precision + 1 in
+// scientific form; integral digits + precision + 1 in fixed form.
 inline bool format_float(double value, int& precision, bool fixed, char* buf, int& exp) noexcept {
   namespace db = eaux::text::static_format::detail::jkj::dragonbox;
   constexpr int num_significand_bits = 52;
