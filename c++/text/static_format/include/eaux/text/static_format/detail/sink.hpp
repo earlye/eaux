@@ -17,7 +17,7 @@
 
 // Forces the per-call glue (to, render, its segment lambda, write_float) inline: in a caller that
 // formats many fields the renderer otherwise crosses clang's inline cost threshold and is called
-// out of line. The float conversion itself stays out of line. MSVC has no lambda form.
+// out of line. The float conversion itself is not forced inline. MSVC has no lambda form.
 #if defined(_MSC_VER) && !defined(__clang__)
 #define EAUX_STATIC_FORMAT_ALWAYS_INLINE __forceinline
 #define EAUX_STATIC_FORMAT_ALWAYS_INLINE_LAMBDA

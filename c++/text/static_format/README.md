@@ -164,11 +164,9 @@ replacement and the alternatives measured. The vendored conversion halves the co
 precision float field (`%8.3f` 48 to 20 ns, about 320 instructions where libstdc++ took 660)
 and puts static_format ahead of `FMT_COMPILE` there.
 
-Moving the heap fallback out of `write_float` and folding the fill at compile time cut 2-5% from
-the float fields and 5-16% from the mixed line and the row, but clang then stopped inlining the
-segment render into the batch loop: the batch got 20-25% slower with the vendored conversion.
-Forcing the renderer glue inline (`EAUX_STATIC_FORMAT_ALWAYS_INLINE` on `to`, `render`, its
-segment lambda and `write_float`, leaving the conversion out of line) removes that: the batch is
-28% faster under clang and 17-21% under g++, the single fields within 3%. The cost is in the
-`std::string` results: g++'s mixed line about 25% slower with `_bfmt` and 6% with `_pfmt`,
-clang's `_bfmt` row about 10%; the rest are level or faster.
+`to`, `render`, its segment lambda and `write_float` are forced inline
+(`EAUX_STATIC_FORMAT_ALWAYS_INLINE`); the float conversion itself is not forced inline. Without
+it, clang calls the renderer out of line in many-field callers. Forcing it makes the float batch
+28% faster under clang and 17-21% under g++, and leaves single fields within 3%. The cost is in
+the `std::string` results: g++'s mixed line is about 25% slower with `_bfmt` and 6% with
+`_pfmt`, and clang's `_bfmt` row about 10%.

@@ -7,8 +7,8 @@ entries for subnormals) for `%f`, `%e` and `%g`. `float_chars.hpp` lays the digi
 output equals `std::to_chars` byte for byte, including its shortest-form choice between fixed
 and scientific and its exact printing of integers from 2^53. Sign, padding, `#` and upper case
 stay in `write_float`. `long double` wider than `double`, `%a`, and what the fast path cannot
-decide go to `std::to_chars`: more than 17-18 significant digits in total, which covers `%e`/`%g`
-at precision 17 and up and `%f` where integral digits plus precision exceed that (e.g. `%.6f` of
+decide go to `std::to_chars`: more than 17-18 significant digits in total, which covers `%e` at
+precision 17 and up (at 17 only for some values), `%g` at 18 and up, and `%f` where integral digits plus precision exceed that (e.g. `%.6f` of
 values from 1e12).
 `float` converts as `double`, except shortest form, which uses Dragonbox's binary32 mode.
 

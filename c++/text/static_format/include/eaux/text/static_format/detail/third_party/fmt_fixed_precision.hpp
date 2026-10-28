@@ -47,8 +47,9 @@ inline void write2digits(char* out, std::uint32_t value) noexcept { std::memcpy(
 
 using db_uint128 = jkj::dragonbox::detail::wuint::uint128;
 
-// 10^k for k in (326, 341]: Dragonbox's table stops at 326, which shortest form needs, while the
-// fixed-precision digits of subnormals need up to 341. Copied from fmt's full cache.
+// 10^k for k up to 341. Dragonbox's table stops at 326, enough for shortest form; the
+// fixed-precision digits of subnormals need up to 341, so the 15 entries past it are copied from
+// fmt's full cache.
 inline db_uint128 cached_power(int k) noexcept {
   using cache = jkj::dragonbox::cache_holder<jkj::dragonbox::ieee754_binary64>;
   static constexpr db_uint128 extra[] = {
