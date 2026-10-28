@@ -1,5 +1,6 @@
 #pragma once
 
+#include <eaux/text/static_format/detail/float_chars.hpp>
 #include <eaux/text/static_format/detail/segment.hpp>
 #include <eaux/text/static_format/detail/sink.hpp>
 #include <eaux/text/unicode/unicode.hpp>
@@ -19,7 +20,8 @@
 
 // Writers for the built-in argument kinds. Each takes its field_spec as a template argument, so
 // the branches on flags, width and conversion fold away and only the conversion itself runs.
-// Numbers are converted with std::to_chars and are therefore always "C"-locale.
+// Integers are converted with std::to_chars and floats by the backend in float_chars.hpp, so both
+// are always "C"-locale.
 namespace eaux::text::static_format::detail {
 
 // The fill is a template argument so a one-byte fill folds to sink.fill and inlines; taking it
@@ -191,24 +193,6 @@ void write_integer(Sink& sink, T value) {
                                           Spec.alignment == align::internal)
                                    : Spec.zero && Spec.alignment == align::none;
   put_padded<Spec, align::right>(sink, sign, prefix, zeros, digits, digits.size(), zero_pad);
-}
-
-template <class F>
-using to_chars_float = std::conditional_t<std::is_same_v<F, long double> && sizeof(long double) == sizeof(double), double, F>;
-
-// Returns the length written, or 0 when the buffer is too small (a conversion is never empty).
-template <class F>
-std::size_t float_chars(char* first, std::size_t capacity, F value, std::chars_format format, std::size_t precision) {
-  auto const v = static_cast<to_chars_float<F>>(value);
-  auto const r = precision == no_precision ? std::to_chars(first, first + capacity, v, format)
-                                           : std::to_chars(first, first + capacity, v, format, static_cast<int>(precision));
-  return r.ec == std::errc{} ? static_cast<std::size_t>(r.ptr - first) : 0;
-}
-
-template <class F>
-std::size_t shortest_chars(char* first, std::size_t capacity, F value) {
-  auto const r = std::to_chars(first, first + capacity, static_cast<to_chars_float<F>>(value));
-  return r.ec == std::errc{} ? static_cast<std::size_t>(r.ptr - first) : 0;
 }
 
 // The decimal exponent of a %e rendering, e.g. 3 for "1.234e+03".
