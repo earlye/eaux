@@ -89,7 +89,9 @@ splits a cluster, and `to_n` stops at the last whole cluster that fits. This dep
 byte counting on purpose, so columns stay aligned when a label is `µs` or `σ_max`. Runtime
 strings are scanned for non-ASCII bytes a word at a time and take a length-equals-width fast
 path when there are none; `ascii_string_view` skips even that scan. Malformed UTF-8 passes
-through. Numbers go through `std::to_chars`, so output is always "C"-locale. MSVC builds need
+through. Integers go through `std::to_chars`; floats through vendored Dragonbox and a port of
+fmt's fixed-precision digits (ADR 0003), which write exactly what `std::to_chars` writes, so
+output is always "C"-locale and needs no dependency. MSVC builds need
 `/utf-8`, which the CMake target adds. See `docs/adr/`.
 
 ## Benchmarks
@@ -111,44 +113,45 @@ have changes, so every row is tied to the exact commit measured.
 Median ns per call on an AMD Ryzen 9 3900X, Linux 7.0, CMake Release (`-O3`), libstdc++ 15,
 fmt 12.2.0, Google Benchmark 1.10.0, pinned to one core, 5 repetitions. These are the rows that
 `make bench-record` appended to `bench/bench.jsonl` for commit
-`a1bc91a9a90a10b860324619df38abee43e3b1e3`:
+`a94e0c888d61` (the float conversion of ADR 0003):
 
 | case | snprintf | std::format_to | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
 |---|---:|---:|---:|---:|---:|
-| `0x%02X`, g++ 15.2 | 45.7 | 62.4 | 9.6 | **8.2** | 8.3 |
-| `0x%02X`, clang 21.1 | 45.9 | 54.4 | 12.5 | **6.0** | 6.0 |
-| `%8.3f`, g++ | 199 | 115 | **39.2** | 47.6 | 47.5 |
-| `%8.3f`, clang | 201 | 122 | **42.3** | 51.3 | 50.1 |
-| shortest `{}`, g++ | | 67.9 | **21.6** | | 39.0 |
-| shortest `{}`, clang | | 78.9 | **25.5** | | 38.3 |
-| `%g`, g++ | 182 | 115 | **32.7** | 51.8 | 51.6 |
-| `%g`, clang | 186 | 122 | **35.4** | 55.5 | 53.1 |
-| `%e`, g++ | 179 | 102 | **30.0** | 41.0 | 40.9 |
-| `%e`, clang | 182 | 112 | 40.7 | **39.8** | 39.9 |
-| float batch (48 fields), g++ | 9356 | 5760 | **1832** | 2513 | 2523 |
-| float batch (48 fields), clang | 9342 | 5741 | **1853** | 2627 | 2636 |
-| short mixed line, g++ | 305 | 255 | **60.6** | 73.4 | 79.4 |
-| short mixed line, clang | 302 | 232 | 80.8 | 68.5 | **63.1** |
-| 30-argument row, g++ | 5709 | 3907 | 1934 | **1463** | 1497 |
-| 30-argument row, clang | 5684 | 4312 | 2246 | **1542** | 1565 |
-| row, `ascii_string_view` labels, g++ | | | | 1462 | 1468 |
-| row, `ascii_string_view` labels, clang | | | | 1550 | 1502 |
+| `0x%02X`, g++ 15.2 | 44.8 | 68.9 | 9.3 | **7.9** | 8.3 |
+| `0x%02X`, clang 21.1 | 45.4 | 55.8 | 12.0 | **6.0** | 6.0 |
+| `%8.3f`, g++ | 197 | 117 | 37.8 | 19.8 | **19.8** |
+| `%8.3f`, clang | 199 | 118 | 43.6 | **20.7** | 20.8 |
+| shortest `{}`, g++ | | 94.2 | **21.6** | | 29.3 |
+| shortest `{}`, clang | | 71.0 | **25.4** | | 28.0 |
+| `%g`, g++ | 181 | 114 | 31.3 | **18.9** | 19.0 |
+| `%g`, clang | 184 | 120 | 34.3 | **22.5** | 23.8 |
+| `%e`, g++ | 179 | 103 | 28.9 | 19.0 | **18.8** |
+| `%e`, clang | 183 | 109 | 38.2 | 18.8 | **18.6** |
+| float batch (48 fields), g++ | 9282 | 5687 | 1795 | **1197** | 1281 |
+| float batch (48 fields), clang | 9272 | 5719 | 1950 | **1262** | 1266 |
+| short mixed line, g++ | 305 | 252 | 55.1 | 55.9 | **48.8** |
+| short mixed line, clang | 301 | 231 | 71.3 | 38.1 | **37.0** |
+| 30-argument row, g++ | 5660 | 3902 | 1909 | **709** | 715 |
+| 30-argument row, clang | 5696 | 4172 | 2310 | **704** | 710 |
+| row, `ascii_string_view` labels, g++ | | | | 712 | 660 |
+| row, `ascii_string_view` labels, clang | | | | 699 | 699 |
 
 | returning `std::string` | std::format | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
 |---|---:|---:|---:|---:|
-| `0x%02X`, g++ | 71.9 | 16.8 | 15.6 | **15.1** |
-| `0x%02X`, clang | 66.5 | **20.0** | 21.4 | 21.1 |
-| short mixed line, g++ | 270 | 152 | 110 | **105** |
-| short mixed line, clang | 257 | 161 | **110** | 110 |
-| 30-argument row, g++ | 3935 | 2362 | **1654** | 1654 |
-| 30-argument row, clang | 4364 | 2878 | 1826 | **1737** |
+| `0x%02X`, g++ | 72.0 | 17.7 | **14.7** | 14.8 |
+| `0x%02X`, clang | 68.0 | **19.1** | 21.1 | 21.2 |
+| short mixed line, g++ | 269 | 164 | 82.6 | **72.6** |
+| short mixed line, clang | 254 | 159 | **74.5** | 75.0 |
+| 30-argument row, g++ | 3947 | 2315 | 881 | **879** |
+| 30-argument row, clang | 4278 | 2802 | 898 | **884** |
 
 Where it loses to `FMT_COMPILE`:
 
-- Floats. A lone `%8.3f` is 18-21% slower, `%g` 50-58%, shortest `{}` 50-80%, `%e` 36% under
-  g++ (level under clang), and the 48-field batch 37-42%. The mixed line, which contains one
-  `%5.1f`, is 21-31% slower under g++ and ahead under clang.
-- A tiny result returned as `std::string` (`0x%02X`) is about 1 ns (6%) slower under clang;
+- Shortest `{}` on a double: 35% slower under g++, 10% under clang. Both run Dragonbox; the
+  rest is static_format's layout, which reproduces `std::to_chars`' choice between fixed and
+  scientific.
+- `_pfmt`'s mixed line under g++ is level (1%); `_bfmt` is ahead.
+- A tiny result returned as `std::string` (`0x%02X`) is about 2 ns (10%) slower under clang;
   under g++ it is ahead.
 
 Where the float time goes, from `perf record` and callgrind on `%8.3f` (libstdc++ debug symbols
@@ -161,10 +164,17 @@ checks cost under 0.5 ns. Inlining the short copies and fills in place of the `m
 calls was slower (g++ `%8.3f` 50 to 59 ns). Moving the heap fallback out of `write_float`
 and folding the fill at compile time cut 2-5% from the float fields and 5-16% from the mixed
 line and the row. Clang's batch got about 7% slower, because clang then stops inlining the
-segment render into the loop. Under g++ the conversion alone loses to fmt, so only a faster
-conversion closes the gap. Under clang the remaining overhead is most of it.
+segment render into the loop.
 
-It is ahead in every other case: integers into a buffer, the 30-argument row both ways, and the
-mixed line returned as `std::string`. The `ascii_string_view` row is no faster than the plain
+So under g++ only a faster conversion could close the gap. ADR 0003 records the three
+candidates measured side by side: an fmt backend, vendored Dragonbox plus a port of fmt's
+fixed-precision digits, and the same with floff. The vendored port won: it halves the cost of
+every precision float field (`%8.3f` 48 to 20 ns, about 320 instructions where libstdc++ took
+660) and puts static_format ahead of `FMT_COMPILE` there. With it, a1bc91a's clang regression
+remains and is larger: the batch is 20-25% slower than with a1bc91a reverted, while the single
+fields are 3-8% faster with it.
+
+It is ahead in every other case: integers into a buffer, every precision float field, the float
+batch, the 30-argument row both ways, and the mixed line returned as `std::string`. The `ascii_string_view` row is no faster than the plain
 one beyond noise (at most 4%): scanning two 12-byte labels for non-ASCII bytes costs almost
 nothing.
