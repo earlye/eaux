@@ -29,6 +29,9 @@ constexpr std::size_t capacity = 1500;  // %.1074f of DBL_MAX, with room to spar
 // digits after the point of the smallest subnormal.
 constexpr std::size_t large_precisions[] = {18, 20, 25, 40, 100, 120, 330, 340, 1074};
 
+constexpr std::chars_format formats[] = {std::chars_format::fixed, std::chars_format::scientific,
+                                          std::chars_format::general};
+
 // Values that catch layout and rounding mistakes: zeros, the extremes, powers of ten and their
 // neighbours, exact binary ties (x.5, x.125), decimal near-ties (x.xxx5 rounded to binary), and
 // runs of nines that carry into a new digit.
@@ -109,49 +112,6 @@ std::string reference(F value, std::chars_format format, std::size_t precision) 
   return out;
 }
 
-struct mismatches {
-  int count = 0;
-  std::string first;
-
-  template <class F>
-  void check(F value, std::chars_format format, std::size_t precision) {
-    F const magnitude = std::fabs(value);
-    std::string const got = ours(magnitude, format, precision);
-    std::string const want = reference(magnitude, format, precision);
-    if (got == want) return;
-    if (count++ < 5) {
-      char hex[64];
-      std::snprintf(hex, sizeof hex, "%a", static_cast<double>(magnitude));
-      first += std::string(hex) + " format " + std::to_string(static_cast<int>(format)) + " precision " +
-               (precision == detail::no_precision ? std::string("shortest") : std::to_string(precision)) + ": got " + got +
-               ", want " + want + "\n";
-    }
-  }
-};
-
-void check_precisions(std::vector<double> const& values) {
-  mismatches m;
-  for (double const v : values) {
-    for (std::size_t p = 0; p <= 17; ++p) {
-      m.check(v, std::chars_format::fixed, p);
-      m.check(v, std::chars_format::scientific, p);
-      m.check(v, std::chars_format::general, p);
-    }
-    for (std::size_t const p : large_precisions) {
-      m.check(v, std::chars_format::fixed, p);
-      m.check(v, std::chars_format::scientific, p);
-      m.check(v, std::chars_format::general, p);
-    }
-    m.check(v, std::chars_format::general, detail::no_precision);
-    if (float const f = static_cast<float>(v); std::isfinite(f)) {
-      m.check(f, std::chars_format::general, detail::no_precision);
-      m.check(f, std::chars_format::fixed, 6);
-    }
-  }
-  INFO(m.first);
-  CHECK(m.count == 0);
-}
-
 template <class... Args>
 std::string c_printf(char const* format, Args... args) {
 #if defined(__GNUC__)
@@ -164,6 +124,43 @@ std::string c_printf(char const* format, Args... args) {
 #pragma GCC diagnostic pop
 #endif
   return out;
+}
+
+struct mismatches {
+  int count = 0;
+  std::string first;
+
+  template <class F>
+  void check(F value, std::chars_format format, std::size_t precision) {
+    F const magnitude = std::fabs(value);
+    std::string const got = ours(magnitude, format, precision);
+    std::string const want = reference(magnitude, format, precision);
+    if (got == want) return;
+    if (count++ < 5) {
+      first += c_printf("%a", static_cast<double>(magnitude)) + " format " + std::to_string(static_cast<int>(format)) +
+               " precision " +
+               (precision == detail::no_precision ? std::string("shortest") : std::to_string(precision)) + ": got " + got +
+               ", want " + want + "\n";
+    }
+  }
+};
+
+void check_precisions(std::vector<double> const& values) {
+  mismatches m;
+  auto const check_all = [&m](double v, std::size_t p) {
+    for (auto const f : formats) m.check(v, f, p);
+  };
+  for (double const v : values) {
+    for (std::size_t p = 0; p <= 17; ++p) check_all(v, p);
+    for (std::size_t const p : large_precisions) check_all(v, p);
+    m.check(v, std::chars_format::general, detail::no_precision);
+    if (float const f = static_cast<float>(v); std::isfinite(f)) {
+      m.check(f, std::chars_format::general, detail::no_precision);
+      m.check(f, std::chars_format::fixed, 6);
+    }
+  }
+  INFO(m.first);
+  CHECK(m.count == 0);
 }
 
 // Writes into exactly `size` bytes followed by guard bytes, which must stay untouched. Every
@@ -225,9 +222,7 @@ TEST_CASE("float conversion writes nothing past its capacity and returns 0 when 
   for (double const d : edge_values()) {
     double const v = std::fabs(d);
     for (std::size_t const p : precisions) {
-      check_capacities(m, v, std::chars_format::fixed, p);
-      check_capacities(m, v, std::chars_format::scientific, p);
-      check_capacities(m, v, std::chars_format::general, p);
+      for (auto const f : formats) check_capacities(m, v, f, p);
     }
     check_capacities(m, v, std::chars_format::general, detail::no_precision);
     if (float const f = static_cast<float>(v); std::isfinite(f)) {
