@@ -34,6 +34,9 @@ rounds of three repetitions each, fmt 12.2.0, `_bfmt` rows (`_pfmt` is the same 
 | 30-argument row, g++ | 1504 (19299) | 1814 (21468) | 1214 (13848) | **718 (10463)** | 1951 (21924) |
 | 30-argument row, clang | 1535 (19283) | 1781 (22851) | 989 (12471) | **716 (8859)** | 2330 (26026) |
 
+The batch rows predate a5d8a13, which forces the renderer glue inline; with that, the vendored
+batch is 1019 ns under g++ and 914 under clang (`bench.jsonl`).
+
 Vendored is 40-69% faster than the fmt backend on every row but shortest form, where it is 4.4%
 (clang) and 4.6% (g++) slower, 2-3% more instructions: both run Dragonbox and the same layout
 code, and fmt's copy of Dragonbox is slightly leaner. That is inside the ~5%, so vendored wins.
