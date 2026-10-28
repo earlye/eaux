@@ -53,7 +53,10 @@ calls, may not. Early raised whether this should be tunable.
   fields about 14% slower. It takes the format as a runtime argument and only simplifies once
   inlined, so it behaves like glue. The genuinely heavy function, `fmt_port::format_float`, is
   already never inlined.
-- **`flatten` is a bad fit:** it would copy the conversion into every field of a format string.
+- **`[[gnu::flatten]]` still needs testing.** The suggestion that it is a bad fit was never
+  measured. It rests on reasoning that copying the conversion into every field of a format
+  string would bloat code and the instruction cache. Benchmark it as one of the policy options:
+  batch, single-field and `std::string` rows under g++ and clang, plus binary size.
 - **MSVC's buffer check:** with `write_float` forced inline, MSVC's static check (C4789) sees
   constant precisions, and has produced a false positive before. PR #10 commit db020ad
   side-steps it for constant precisions of 120 or more.
