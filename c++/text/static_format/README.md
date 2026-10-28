@@ -89,7 +89,9 @@ splits a cluster, and `to_n` stops at the last whole cluster that fits. This dep
 byte counting on purpose, so columns stay aligned when a label is `µs` or `σ_max`. Runtime
 strings are scanned for non-ASCII bytes a word at a time and take a length-equals-width fast
 path when there are none; `ascii_string_view` skips even that scan. Malformed UTF-8 passes
-through. Numbers go through `std::to_chars`, so output is always "C"-locale. MSVC builds need
+through. Integers go through `std::to_chars`; floats through vendored Dragonbox and a port of
+fmt's fixed-precision digits (ADR 0003), which write exactly what `std::to_chars` writes, so
+output is always "C"-locale and needs no dependency. MSVC builds need
 `/utf-8`, which the CMake target adds. See `docs/adr/`.
 
 ## Benchmarks
@@ -97,7 +99,10 @@ through. Numbers go through `std::to_chars`, so output is always "C"-locale. MSV
 `make bench` (from `c++/`) builds `bench/` optimized with each compiler and runs it. CI only
 builds it. Each case writes into a preallocated buffer; the `string_` cases return
 `std::string`. The `row` cases format a 30-argument table row (two `%-12s` labels and 28
-`%10.4f`), and `row_ascii` passes the labels as `ascii_string_view`.
+`%10.4f`), and `row_ascii` passes the labels as `ascii_string_view`. The shortest `{}`, `%g` and
+`%e` cases and the float batch take 17-digit values from 1e-9 to 1e9; the batch writes 16 lines
+of `"%.6e %g %10.4f\n"` (48 float fields) per call. printf has no shortest form, so `_pfmt` and
+snprintf have no shortest case.
 
 `bench/bench.jsonl` is the benchmark history: one JSON object per commit, compiler and case,
 with the host, the compiler, whether the run was pinned, and each contender's median ns.
@@ -108,49 +113,68 @@ have changes, so every row is tied to the exact commit measured.
 Median ns per call on an AMD Ryzen 9 3900X, Linux 7.0, CMake Release (`-O3`), libstdc++ 15,
 fmt 12.2.0, Google Benchmark 1.10.0, pinned to one core, 5 repetitions. These are the rows that
 `make bench-record` appended to `bench/bench.jsonl` for commit
-`5a5db785e922aad59bc1028a68d8848827ad7812`:
+`a5d8a13e3029` (the float conversion of ADR 0003, renderer forced inline):
 
 | case | snprintf | std::format_to | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
 |---|---:|---:|---:|---:|---:|
-| `0x%02X`, g++ 15.2 | 44.9 | 65.6 | 9.6 | 8.7 | **8.6** |
-| `0x%02X`, clang 21.1 | 47.0 | 54.5 | 12.3 | **6.1** | 6.1 |
-| `%8.3f`, g++ | 206 | 117 | **40.8** | 52.4 | 52.1 |
-| `%8.3f`, clang | 210 | 123 | **42.5** | 51.7 | 51.6 |
-| short mixed line, g++ | 304 | 253 | **57.2** | 77.3 | 84.5 |
-| short mixed line, clang | 302 | 228 | **62.1** | 65.0 | 65.0 |
-| 30-argument row, g++ | 5838 | 3867 | 1919 | **1741** | 1745 |
-| 30-argument row, clang | 5886 | 4056 | 2239 | 1488 | **1476** |
-| row, `ascii_string_view` labels, g++ | | | | 1735 | 1745 |
-| row, `ascii_string_view` labels, clang | | | | 1502 | 1500 |
+| `0x%02X`, g++ 15.2 | 46.0 | 69.0 | 9.4 | 6.3 | **6.3** |
+| `0x%02X`, clang 21.1 | 47.7 | 56.3 | 12.4 | **6.0** | 6.1 |
+| `%8.3f`, g++ | 198 | 115 | 39.0 | **19.7** | 19.9 |
+| `%8.3f`, clang | 200 | 122 | 42.6 | 21.6 | **21.6** |
+| shortest `{}`, g++ | | 82.7 | **21.6** | | 29.8 |
+| shortest `{}`, clang | | 71.9 | **25.6** | | 29.2 |
+| `%g`, g++ | 182 | 114 | 32.8 | **18.8** | 18.9 |
+| `%g`, clang | 184 | 122 | 34.6 | 23.4 | **22.9** |
+| `%e`, g++ | 180 | 99.8 | 29.4 | **19.0** | 19.0 |
+| `%e`, clang | 182 | 112 | 37.8 | **19.2** | 19.2 |
+| float batch (48 fields), g++ | 9322 | 5737 | 1718 | **1008** | 1019 |
+| float batch (48 fields), clang | 9336 | 5739 | 1792 | **912** | 914 |
+| short mixed line, g++ | 307 | 263 | 56.7 | **47.7** | 49.2 |
+| short mixed line, clang | 303 | 231 | 65.2 | 38.4 | **38.1** |
+| 30-argument row, g++ | 5708 | 3890 | 1933 | **688** | 711 |
+| 30-argument row, clang | 5697 | 4191 | 2274 | **677** | 692 |
+| row, `ascii_string_view` labels, g++ | | | | 656 | 655 |
+| row, `ascii_string_view` labels, clang | | | | 669 | 657 |
 
 | returning `std::string` | std::format | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
 |---|---:|---:|---:|---:|
-| `0x%02X`, g++ | 73.2 | 16.6 | **15.8** | 16.1 |
-| `0x%02X`, clang | 64.4 | **19.1** | 21.0 | 21.0 |
-| short mixed line, g++ | 270 | 153 | 107 | **106** |
-| short mixed line, clang | 253 | 167 | 110 | **108** |
-| 30-argument row, g++ | 3879 | 2278 | **1757** | 1775 |
-| 30-argument row, clang | 4133 | 2833 | 1676 | **1645** |
+| `0x%02X`, g++ | 75.8 | 18.5 | **15.0** | 15.2 |
+| `0x%02X`, clang | 66.7 | **19.5** | 19.8 | 19.7 |
+| short mixed line, g++ | 286 | 166 | **87.8** | 90.6 |
+| short mixed line, clang | 253 | 178 | 71.2 | **69.6** |
+| 30-argument row, g++ | 3924 | 2468 | **843** | 885 |
+| 30-argument row, clang | 4244 | 2952 | **867** | 971 |
 
 Where it loses to `FMT_COMPILE`:
 
-- A lone `%8.3f` is 21-28% slower, and the short mixed line into a buffer, which contains one,
-  5% slower under clang and 35-48% under g++. Most of the time is the conversion: libstdc++'s
-  `std::to_chars(value, fixed, 3)` alone takes about 40 ns here, against fmt's 31 ns (g++) and
-  42 ns (clang) for the whole field; static_format adds about 10 ns of its own, half of it the
-  width padding.
-- A tiny result returned as `std::string` (`0x%02X`) is about 2 ns (10%) slower under clang;
-  under g++ it is level or ahead.
+- Shortest `{}` on a double: 38% slower under g++, 14% under clang. Both run Dragonbox; the
+  rest is static_format's layout, which reproduces `std::to_chars`' choice between fixed and
+  scientific.
+- A tiny result returned as `std::string` (`0x%02X`) is level under clang (1-2%); under g++ it
+  is ahead.
 
-It is ahead in every other case: integers into a buffer, the 30-argument row both ways, and the
-mixed line returned as `std::string`. The `ascii_string_view` row is no faster than the plain
-one beyond noise (at most 2%): scanning two 12-byte labels for non-ASCII bytes costs almost
-nothing.
+It is ahead in every other case: integers into a buffer, every precision float field, the float
+batch, and the 30-argument row and the mixed line both ways. The `ascii_string_view` row is 1-8%
+faster than the plain one, within run-to-run noise for this row: scanning two 12-byte labels
+for non-ASCII bytes costs almost nothing.
+
+Profiling `%8.3f` on `std::to_chars` put about 80% of the time in libstdc++'s Ryu-printf
+conversion (~580 instructions, more than fmt's whole field under g++). ADR 0003 records the
+replacement and the alternatives measured. The vendored conversion halves the cost of every
+precision float field (`%8.3f` 48 to 20 ns, about 320 instructions where libstdc++ took 660)
+and puts static_format ahead of `FMT_COMPILE` there.
+
+`to`, `render`, its segment lambda and `write_float` are forced inline
+(`EAUX_STATIC_FORMAT_ALWAYS_INLINE`); the float conversion itself is not. Without the forced
+inlining, clang calls the renderer out of line in many-field callers. With it, the float batch is
+28% faster under clang and 17-21% under g++, and single fields stay within 3%. The cost is in
+the `std::string` results: g++'s mixed line is about 25% slower with `_bfmt` and 6% with
+`_pfmt`, and clang's `_bfmt` row about 10%.
 
 The same on an Apple M4 Pro, macOS 15 (Darwin 24.6), CMake Release, Apple clang 17.0 with its
 libc++ 20.1 and Homebrew clang 22.1 with libc++ 22.1, same fmt and Google Benchmark. macOS
 cannot pin a process to a core, so these runs are unpinned. Commit
-`b4862f2fa7d840a8e96e63cd749903588b31129a`:
+`b4862f2fa7d840a8e96e63cd749903588b31129a`, before the vendored float conversion:
 
 | case | snprintf | std::format_to | fmt FMT_COMPILE | `_pfmt` | `_bfmt` |
 |---|---:|---:|---:|---:|---:|
