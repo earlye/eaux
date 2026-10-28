@@ -153,30 +153,22 @@ Where it loses to `FMT_COMPILE`:
 - A tiny result returned as `std::string` (`0x%02X`) is level under clang (1-2%); under g++ it
   is ahead.
 
-Where the float time goes, from `perf record` and callgrind on `%8.3f` (libstdc++ debug symbols
-from debuginfod): about 80% is libstdc++'s conversion under both compilers. Its precision path
-is Ryu-printf: `d2fixed_buffered_n` takes 64% of the samples and the `__floating_to_chars_precision`
-wrapper 14%. That is about 580 instructions per call, more than fmt's whole `{:8.3f}` field
-under g++ (558). static_format's own share was about 10 ns (90-110 instructions), spread over
-frame setup, lambda captures, the `memcpy` of the digits and the padding. The `signbit`/`isfinite`
-checks cost under 0.5 ns. Inlining the short copies and fills in place of the `memcpy`/`memset`
-calls was slower (g++ `%8.3f` 50 to 59 ns). Moving the heap fallback out of `write_float`
-and folding the fill at compile time cut 2-5% from the float fields and 5-16% from the mixed
-line and the row. Clang's batch got about 7% slower, because clang then stops inlining the
-segment render into the loop.
-
-So under g++ only a faster conversion could close the gap. ADR 0003 records the three
-candidates measured side by side: an fmt backend, vendored Dragonbox plus a port of fmt's
-fixed-precision digits, and the same with floff. The vendored port won: it halves the cost of
-every precision float field (`%8.3f` 48 to 20 ns, about 320 instructions where libstdc++ took
-660) and puts static_format ahead of `FMT_COMPILE` there. With it, a1bc91a's clang regression
-remained and grew to 20-25% on the batch. a5d8a13 removes it: `EAUX_STATIC_FORMAT_ALWAYS_INLINE`
-forces `to`, `render`, its segment lambda and `write_float` inline, leaving the conversion out of
-line. The batch is 28% faster under clang and 17-21% under g++, the single fields within 3%. The
-cost is in the `std::string` results: g++'s mixed line 21% slower with `_bfmt` and 6% with
-`_pfmt`, clang's `_bfmt` row 9%; the rest are level or faster.
-
 It is ahead in every other case: integers into a buffer, every precision float field, the float
-batch, and the 30-argument row and the mixed line both ways. The `ascii_string_view` row is no faster than the plain
-one beyond noise (at most 4%): scanning two 12-byte labels for non-ASCII bytes costs almost
-nothing.
+batch, and the 30-argument row and the mixed line both ways. The `ascii_string_view` row is 1-8%
+faster than the plain one, within run-to-run noise for this row: scanning two 12-byte labels
+for non-ASCII bytes costs almost nothing.
+
+Profiling `%8.3f` on `std::to_chars` put about 80% of the time in libstdc++'s Ryu-printf
+conversion (~580 instructions, more than fmt's whole field under g++). ADR 0003 records the
+replacement and the alternatives measured. The vendored conversion halves the cost of every
+precision float field (`%8.3f` 48 to 20 ns, about 320 instructions where libstdc++ took 660)
+and puts static_format ahead of `FMT_COMPILE` there.
+
+Moving the heap fallback out of `write_float` and folding the fill at compile time cut 2-5% from
+the float fields and 5-16% from the mixed line and the row, but clang then stopped inlining the
+segment render into the batch loop: the batch got 20-25% slower with the vendored conversion.
+Forcing the renderer glue inline (`EAUX_STATIC_FORMAT_ALWAYS_INLINE` on `to`, `render`, its
+segment lambda and `write_float`, leaving the conversion out of line) removes that: the batch is
+28% faster under clang and 17-21% under g++, the single fields within 3%. The cost is in the
+`std::string` results: g++'s mixed line about 25% slower with `_bfmt` and 6% with `_pfmt`,
+clang's `_bfmt` row about 10%; the rest are level or faster.

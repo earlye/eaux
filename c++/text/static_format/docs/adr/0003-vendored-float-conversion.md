@@ -6,8 +6,10 @@ Dragonbox (Junekey Jeon, BSL-1.0) for shortest form, and the Dragon4-free fast p
 entries for subnormals) for `%f`, `%e` and `%g`. `float_chars.hpp` lays the digits out so the
 output equals `std::to_chars` byte for byte, including its shortest-form choice between fixed
 and scientific and its exact printing of integers from 2^53. Sign, padding, `#` and upper case
-stay in `write_float`. x87 `long double`, `%a`, and what the fast path cannot decide (more than
-17 significant digits, `%f` of tiny values beyond its first segment) go to `std::to_chars`.
+stay in `write_float`. `long double` wider than `double`, `%a`, and what the fast path cannot
+decide go to `std::to_chars`: more than 17-18 significant digits in total, which covers `%e`/`%g`
+at precision 17 and up and `%f` where integral digits plus precision exceed that (e.g. `%.6f` of
+values from 1e12).
 `float` converts as `double`, except shortest form, which uses Dragonbox's binary32 mode.
 
 The rule was fixed before measuring: vendored wins if it matches `std::to_chars` digit for digit
@@ -34,8 +36,8 @@ rounds of three repetitions each, fmt 12.2.0, `_bfmt` rows (`_pfmt` is the same 
 | 30-argument row, g++ | 1504 (19299) | 1814 (21468) | 1214 (13848) | **718 (10463)** | 1951 (21924) |
 | 30-argument row, clang | 1535 (19283) | 1781 (22851) | 989 (12471) | **716 (8859)** | 2330 (26026) |
 
-The batch rows predate a5d8a13, which forces the renderer glue inline; with that, the vendored
-batch is 1019 ns under g++ and 914 under clang (`bench.jsonl`).
+The batch rows predate forcing the renderer glue inline (`EAUX_STATIC_FORMAT_ALWAYS_INLINE`);
+with that, the vendored batch is 1019 ns under g++ and 914 under clang (`bench.jsonl`).
 
 Vendored is 40-69% faster than the fmt backend on every row but shortest form, where it is 4.4%
 (clang) and 4.6% (g++) slower, 2-3% more instructions: both run Dragonbox and the same layout
@@ -52,7 +54,7 @@ It is also faster than fmt's own `FMT_COMPILE` on every row except shortest form
   README calls it a test repository for a work-in-progress algorithm, its last fixes landed in
   2024 and 2026, and the digit test found an upstream bug: the smallest subnormals at precision
   1 print as `0.0e-324`. It is also slower than the fmt port everywhere except clang's `%e`.
-- `std::to_chars` (the previous code). libstdc++'s precision path is Ryu-printf, about 600
+- `std::to_chars` alone. libstdc++'s precision path is Ryu-printf, about 600
   instructions per field; it remains the fallback.
 - Ryu-printf vendored. Not tried: it is what libstdc++ already runs.
 
@@ -60,6 +62,7 @@ It is also faster than fmt's own `FMT_COMPILE` on every row except shortest form
 
 About 270 KB of vendored headers (Dragonbox is 260 KB of it, much of that its cache tables), each with
 its upstream licence text. A Dragonbox or fmt fix has to be copied in by hand. `float_chars_test`
-checks the conversion against `std::to_chars` for `%f`, `%e`, `%g` and `%#g` at precisions 0-17
-and for shortest form, over random and edge-case values, so a port mistake or an upstream
-regression shows up as a test failure.
+checks the conversion against `std::to_chars` for `%f`, `%e` and `%g` at precisions 0-17 and
+selected larger ones up to 1074, for `%#g` at 0-17 and for shortest form, over random and
+edge-case values, and checks that no conversion writes past its capacity, so a port mistake or
+an upstream regression shows up as a test failure.
