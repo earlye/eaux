@@ -73,3 +73,19 @@ Trade-offs:
 - Q: Is the ~10 ns `%8.3f` gap worth closing, given that only option B (fmt) closes it as
   written? — A: Yes. Scientific output writes thousands of floats, so the gap adds up. How to
   close it (fmt dependency, optional backend, or our own implementation) is still open.
+- Q: Depend on fmt (required or optional), or vendor an algorithm? — A: Implement the
+  candidates and let profiling pick. Required vs optional fmt is a packaging choice that
+  profiling cannot separate, so the experiment has three compile-time backends: `std::to_chars`
+  (baseline), fmt, and vendored (Dragonbox for shortest form plus a fixed-precision algorithm).
+- Q: What decides the winner? — A: Vendored wins if it matches `std::to_chars` digit for digit
+  (randomized doubles, precisions 0–17) and is within ~5% of fmt on every float row under both
+  g++ and clang. Otherwise fmt ships as an optional backend with the faster of the others as
+  fallback. The `std::to_chars` path survives only as that fallback. New benchmark rows first:
+  shortest `{}` on a double, `%g` without precision, `%e`, and a large batch of mixed floats.
+- Q: Why are we losing? — A: Not yet known; the PR #7 numbers are timing splits, not a profile.
+  Profile before building backends: `perf record -g`/`perf annotate` on the `%8.3f` and short
+  mixed line rows under g++ and clang, plus callgrind for exact instruction counts. Both tools
+  are installed and usable. Candidate overheads to confirm or refute: the copy from the 128-byte
+  stack buffer through `put_padded`, and the sign/finite/NaN checks ahead of the conversion.
+  Under clang the README's numbers suggest the conversion is roughly level with fmt and the
+  ~10 ns is ours, which no backend would remove.
