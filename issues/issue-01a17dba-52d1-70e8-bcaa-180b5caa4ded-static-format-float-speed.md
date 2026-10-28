@@ -1,70 +1,91 @@
-# static_format: close the float and small-string gap with fmt's FMT_COMPILE
+# static_format: close the float gap with fmt's FMT_COMPILE
 
 ## Context
 
 The benchmark in `c++/text/static_format/README.md` compares static_format against fmt's
-`FMT_COMPILE`. static_format is ahead on `0x%02X` and on the ~30-argument table row. It is behind
-on:
+`FMT_COMPILE`. static_format is ahead everywhere except floats:
 
-- **A lone `%8.3f`:** 22–52% slower. The cost is libstdc++'s `std::to_chars` with a precision.
-- **Probably shortest-form floats** (`{}` on a double, `%g` with no precision). These aren't
-  measured separately yet.
+- **A lone `%8.3f`:** 21–28% slower (about 52 ns against fmt's 41–42 ns). Timing splits from
+  PR #7 put libstdc++'s `std::to_chars(value, fixed, 3)` alone at about 40 ns, against 31 ns
+  (g++) and 42 ns (clang) for fmt's whole field, with about 10 ns of static_format's own on top,
+  half of it width padding.
+- **Probably shortest-form floats** (`{}` on a double, `%g` with no precision). Not measured yet.
 
-Early asked whether static_format could use Dragonbox the way fmt does, and suggested an
-alternative: for the cases where `FMT_COMPILE` is faster, wrap it. static_format would then
-contribute the compile-time safety (printf syntax, `static_assert` diagnostics, the rule that
-every argument is used) and fmt the speed.
+The gap must close: scientific output writes thousands upon thousands of floats, so ~10 ns per
+field adds up. Under clang the numbers above suggest the conversion is roughly level with fmt
+and the loss is mostly our own overhead, which no conversion backend would remove. So the work
+starts with a profile, not a backend.
 
-This is tracked on the PR #7 branch (`earlye/273c554893e7/cpp20-static-format-rewrite`) so it
-merges with that work. Profiling `%8.3f` and the small-string fix are going into PR #7 itself.
-Their findings should feed the decision below.
+## Plan
 
-## Options
+### 1. Benchmark rows
 
-### A. Vendor Dragonbox
+Add rows before measuring anything: shortest `{}` on a double, `%g` without precision, `%e`, and
+a large batch of mixed floats (the scientific-output case).
 
-- **What it is:** Junekey Jeon's algorithm for the shortest round-trip representation of a
-  floating-point value. The reference implementation is a single header, licensed Apache-2.0
-  WITH LLVM-exception or BSL-1.0, either of which is compatible with this MIT repo.
-- **What it would speed up:** the shortest-form path only (`{}` on doubles, `%g` with no
-  precision).
-- **What it would not speed up:** fixed-precision formatting such as `%8.3f`, because there is
-  no shortest form to find. fmt handles that with its own digit generation and a big-integer
-  fallback (unverified). Closing the `%8.3f` gap needs a separate approach.
+### 2. Profile the current code
 
-### B. Hand fields to fmt's compiled formatting (Early's idea)
+Both `perf` and `valgrind` are installed and usable on the dev machine.
 
-For argument and spec combinations where `FMT_COMPILE` measures faster, format the field
-through fmt. static_format would still parse, type-check and validate at compile time.
+- `perf record -g` / `perf annotate` on the bench binary for `%8.3f` and the short mixed line,
+  under g++ and clang: split the time between conversion and static_format's overhead.
+- callgrind for exact instruction counts (sampling is noisy at ~50 ns per field).
+- Candidate overheads to confirm or refute, from reading `write_float` in `detail/write.hpp`:
+  the copy from the 128-byte stack buffer through `put_padded`, and the `signbit`/`isfinite`/
+  `isnan` checks ahead of the conversion.
+- Fix any overhead the profile finds that is independent of the backend.
+- Record the findings in the README.
 
-Trade-offs:
+### 3. Candidate backends
 
-- **Dependency:** fmt becomes a hard dependency of the library. Today it is only used by the
-  benchmark.
-- **Only numeric fields can be handed over.** For text, static_format's width and precision
-  count grapheme clusters and display width (ADR 0002). fmt's rules differ, so string fields
-  must stay ours. Numbers are ASCII, so their padding behaves the same either way.
-- **printf specs need translating** to fmt's brace specs, flags included (`#`, `+`, space,
-  `0`, and the `^ = >` alignments).
-- **Deliberate differences must stay ours.** `{:c}` on an integer writes a code point
-  (ADR 0002), and fmt must not take over that case.
-- **The benchmark becomes partly circular** for the cases handed over.
+Selected at compile time and benchmarked side by side:
 
-## Next steps
+- **`std::to_chars`**: today's path, the baseline.
+- **fmt**: hand float fields to fmt's compiled formatting. static_format still parses,
+  type-checks and validates at compile time; the printf flags (`#`, `+`, space, `0`, and the
+  `^ = >` alignments) are translated to fmt specs.
+- **Vendored**: header-only, no dependency. Dragonbox (Junekey Jeon; Apache-2.0 WITH
+  LLVM-exception or BSL-1.0, both MIT-compatible) for shortest form. For fixed precision, two
+  variants, and the profiler picks between them:
+  - a port of fmt's fixed-precision digit generation (MIT);
+  - Junekey Jeon's floff, if a licence check finds it usable under MIT. If not, only the fmt
+    port enters.
 
-- Choose A, B or both once the `%8.3f` profiling from PR #7 is in.
-- For B, decide whether fmt becomes a required dependency or an optional backend (a CMake
-  option, falling back to `std::to_chars`).
+  Libstdc++'s precision path is believed to be Ryu-printf already (unverified), so Ryu is not a
+  candidate.
+
+Out of scope for every backend: x87 80-bit `long double` and `%a` stay on `std::to_chars`.
+`float` is handled like `double`.
+
+Only numeric fields can go to fmt. String width and precision count grapheme clusters and display
+width (ADR 0002), so strings stay ours. `{:c}` on an integer writes a code point (ADR 0002) and
+must not go to fmt either.
+
+### 4. Correctness
+
+Every non-baseline backend matches `std::to_chars` digit for digit across randomized doubles and
+precisions 0–17, for `%f`, `%e`, `%g` and shortest form.
+
+### 5. Decision rule (set before measuring)
+
+- **Vendored wins** if it is correct and within ~5% of fmt on every float row under both g++ and
+  clang. The losing vendored variant is deleted.
+- **Otherwise fmt wins** and ships as an *optional* backend (CMake option), with the faster of
+  vendored and `std::to_chars` as the fallback, so the dependency-free build stays.
+- The `std::to_chars` path survives only as that fallback. Backends that lose are deleted before
+  the PR.
+- The outcome is hard to reverse and the rejected alternatives are non-obvious: write an ADR in
+  `c++/text/static_format/docs/adr/` recording the measurements and the choice.
 
 ## Relevant files
 
 - `c++/text/static_format/README.md`: benchmark tables and the list of losses.
-- `c++/text/static_format/include/eaux/text/static_format/detail/write.hpp`: float writing,
-  `float_chars` and `shortest_chars`.
+- `c++/text/static_format/include/eaux/text/static_format/detail/write.hpp`: `write_float`,
+  `float_chars`, `shortest_chars`, `put_padded`.
 - `c++/text/static_format/bench/`: benchmark harness (Google Benchmark plus fmt through
   `FetchContent`).
 - `c++/text/static_format/docs/adr/0002-utf8-width-and-truncation.md`: the text width rules and
-  the `{:c}` difference that option B must keep.
+  the `{:c}` difference that must stay ours.
 
 ## Grill Log
 
@@ -89,3 +110,6 @@ Trade-offs:
   stack buffer through `put_padded`, and the sign/finite/NaN checks ahead of the conversion.
   Under clang the README's numbers suggest the conversion is roughly level with fmt and the
   ~10 ns is ours, which no backend would remove.
+- Q: Which fixed-precision algorithm for the vendored backend: port fmt's, floff, or both? —
+  A: Profiler decides. Both enter the run if floff's licence and maturity allow; the loser is
+  deleted.
